@@ -170,9 +170,12 @@ function render(next) {
         el(
           "span",
           "session-detail",
-          `${s.persistent ? "保存セッション" : "一時セッション"}${count ? ` · ${count} タブ` : ""}`,
+          `${s.persistent ? (state.protection?.persistentAllowed ? "保存セッション" : "保存停止中") : "一時セッション"}${count ? ` · ${count} タブ` : ""}`,
         ),
       );
+      const authStatus = el("span", "session-auth-status");
+      authStatus.dataset.sessionId = s.id;
+      description.append(authStatus);
       open.append(dot(s.color), description);
       const edit = button(
         "···",
@@ -180,7 +183,16 @@ function render(next) {
         () => sessionModal(s),
         `${s.name}の設定`,
       );
-      row.append(open, edit);
+      row.append(
+        open,
+        button(
+          "JWT",
+          "session-auth",
+          () => invoke("open-test-tools", { page: "auth", sessionId: s.id }),
+          `${s.name}の認証情報`,
+        ),
+        edit,
+      );
       return row;
     }),
   );
@@ -524,6 +536,29 @@ function renderRuntime() {
   $("#memory-warning-text").textContent = m?.sampledAt
     ? `${formatMemory(m.bytes)} / 警告値 ${limit} MiB。不要なタブやCLIのプロセスを閉じるか、設定を変更できます。`
     : "";
+  $("#protection-notice").hidden = Boolean(state.protection?.persistentAllowed);
+  $("#protection-notice").textContent = state.protection?.message || "";
+  for (const label of document.querySelectorAll(".session-auth-status")) {
+    const entries = (state.auth || []).filter(
+      (a) => a.sessionId === label.dataset.sessionId,
+    );
+    label.textContent = entries.length
+      ? entries
+          .map(
+            (a) =>
+              `${new URL(a.origin).hostname} / ${a.missing ? "候補なし" : a.summary}${a.expired ? " / 期限切れ" : ""}`,
+          )
+          .join(" · ")
+      : "";
+    label.title = entries
+      .map(
+        (a) =>
+          `${a.origin}\n${a.summary}${a.expiresAt ? "\nJWT期限: " + new Date(a.expiresAt).toLocaleString() : ""}\nJWTの内容は未検証です。`,
+      )
+      .join("\n");
+  }
+  if ($("#storage-protection"))
+    $("#storage-protection").textContent = state.protection?.message || "";
   const update = state.update;
   $("#update-notice").hidden = update?.status !== "available";
   $("#update-notice-text").textContent = update?.message || "";
@@ -560,7 +595,9 @@ function appInfoModal() {
       );
       const measured = el("p", "help");
       measured.id = "runtime-memory";
-      body.append(measured);
+      const protectedInfo = el("p", "help");
+      protectedInfo.id = "storage-protection";
+      body.append(measured, protectedInfo);
       memory = field(
         body,
         "メモリ警告（MiB、0で無効）",
@@ -622,6 +659,12 @@ $("#back").addEventListener("click", () => invoke("back"));
 $("#forward").addEventListener("click", () => invoke("forward"));
 $("#reload").addEventListener("click", () => invoke("reload"));
 $("#devtools").addEventListener("click", () => invoke("devtools"));
+$("#open-auth").addEventListener("click", () =>
+  invoke("open-test-tools", { page: "auth" }),
+);
+$("#open-network").addEventListener("click", () =>
+  invoke("open-test-tools", { page: "network" }),
+);
 $("#new-terminal").addEventListener("click", () =>
   newTabModal(false, "terminal"),
 );

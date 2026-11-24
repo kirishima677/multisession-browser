@@ -20,11 +20,21 @@
           バージョン
         </button>
       </div>
-      <button id="save-workset" class="subtle">
-        構成を保存 <kbd>⌘⇧S</kbd>
-      </button>
+      <div class="title-actions">
+        <button id="open-auth" class="subtle">JWT・トークン</button
+        ><button id="open-network" class="subtle">応答検索</button>
+        <button id="save-workset" class="subtle">
+          構成を保存 <kbd>⌘⇧S</kbd>
+        </button>
+      </div>
     </header>
     <aside class="sidebar">
+      <div
+        id="protection-notice"
+        class="runtime-warning"
+        role="status"
+        hidden
+      ></div>
       <div id="memory-warning" class="runtime-warning" role="alert" hidden>
         <strong>メモリ使用量が設定値を超えました</strong>
         <p id="memory-warning-text"></p>

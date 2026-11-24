@@ -122,3 +122,18 @@ APIビューには任意サイト用のpartitionやpreloadを使わない。ロ�
 定期的なメモリ・更新状態はbrowser:runtimeで専用通知する。タブ列・セッション一覧のDOMを定期的に作り直さない。版数はapp.getVersionとprocess.versionsから取得し、表示用の版数を別途ハードコードしない。
 
 node-pty 1.1.0に同梱されたMac用N-APIバイナリを利用するため、electron-builderのnpmRebuildは無効にしている。scripts/prepare-terminal.jsでspawn-helperの実行権限を設定し、node-pty一式はASARの外へ展開する。npm install / start / pack:mac / dist:macで準備する。将来ネイティブ依存を追加・更新する際は、このビルド方針とElectronとの互換性を再検証する。
+
+## Ver 0.6.0：JWT・応答検索・暗号化
+
+- `jwt.js`：JWT/JWEの候補判定、未検証claimの表示用情報、Cookie候補のハッシュ、対象URLと保存メタデータの検証。値の形式で候補を判定し、Cookie名を固定しない。
+- `auth-manager.js`：セッション・origin単位の選択、Cookieの再取得、直接入力、保存選択、Cookie変更イベントに合わせた識別情報更新。トークン値は管理画面の状態通知に入れない。
+- `protection.js`：実行中バイナリのCookie暗号化fuseを小さいバッファで読み、非同期safeStorageの可用性を確認する。安全な保存が利用できなければ、既存persistent partitionを開かず、同名ラベルのメモリpartitionで動作する。
+- 手入力値はtokens.enc.jsonにOS暗号文として原子的に保存する。変更を直列化し、暗号化・復号に失敗した場合は既存ファイルを維持する。workspace.jsonには選択候補のハッシュ・対象URL等の非秘密メタデータだけを保存する。
+- 初回のpersistent partition読み込み時にCookieを取得・再設定・flushし、security-state.jsonに移行済みIDを記録する。暗号化を無効にした旧版との同一プロファイル共有は非対応。
+- `network-capture.js`：管理下のWebタブ/ポップアップへCDP Networkを接続する。XHR/fetch完了後にbodyを取得し、リクエスト内容やルーティングは変更しない。APIタブは完了コールバックから直接収集し、二重記録を避ける。
+- `response-store.js`：整形テキストの容量制限、古い記録の破棄、本文の文字列検索と抜粋。検索元のtabId/contentsId/sessionIdを保持し、元のタブへ戻せるようにする。応答はファイルへ書かない。
+- `test-tools.js` / `test-tools-preload.js` / `test-tools.html` / `test-tools-ui.js` / `test-tools.css`：別ウィンドウの専用UI。管理下の正確なローカルURL・メインフレームだけをIPC認可し、ブラウザ管理API・Node.js・CLIのAPIは渡さない。
+- 候補・対象サイト変更後に遅れた応答が到着しても、以前のトークンを表示しない。検索結果も応答IDごとにDOMを再利用し、記録更新中のクリック・選択を保持する。
+- 応答はtextarea/textContentで表示し、HTML・スクリプト・画像として実行しない。クリップボードは利用者の明示操作でだけ更新する。
+
+scripts/secure-build.jsをafterPackで呼び、Cookie暗号化fuseを有効化する。Macでは変更後にad-hoc署名を再設定する。scripts/secure-dev.jsは開発用Electronの同じ設定を行い、prestartから呼ぶ。Developer ID署名・公証と、Windows/Linuxの実機確認は別途必要。

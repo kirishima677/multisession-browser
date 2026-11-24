@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { draft: apiDraft, storedDraft } = require("./api-request");
 const { preferences, terminalDefinition } = require("./runtime-model");
+const { validateBindings } = require("./jwt");
 
 const COLORS = [
   "#6478ff",
@@ -95,6 +96,7 @@ function defaults() {
     worksets: [],
     apiRequests: [],
     preferences: preferences(),
+    authBindings: [],
   };
 }
 function validateConfig(data) {
@@ -119,6 +121,7 @@ function validateConfig(data) {
     label(s.name);
     ids.add(s.id);
   }
+  data.authBindings = validateBindings(data.authBindings, ids);
   const worksetIds = new Set();
   for (const w of data.worksets) {
     if (!idOK(w.id) || worksetIds.has(w.id) || !Array.isArray(w.tabs))

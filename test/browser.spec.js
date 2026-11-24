@@ -13,8 +13,57 @@ const imageCookies = [];
 let redirectHits = 0;
 let updateHits = 0;
 let releaseFixture = { status: 404, body: {} };
+const tokenA = sampleJWT({
+  alumni_id: 101,
+  company_name: "テストA社",
+  exp: Math.floor(Date.now() / 1000) + 3600,
+});
+const tokenB = sampleJWT({
+  alumni_id: 202,
+  company_name: "テストB社",
+  exp: Math.floor(Date.now() / 1000) + 7200,
+});
+let responseHits = 0;
+function sampleJWT(claims) {
+  return [
+    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString(
+      "base64url",
+    ),
+    Buffer.from(JSON.stringify(claims)).toString("base64url"),
+    Buffer.from("synthetic-test-signature").toString("base64url"),
+  ].join(".");
+}
+
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
+    if (req.url.startsWith("/tokens/")) {
+      const which = req.url.includes("refresh") ? tokenB : tokenA;
+      res.setHeader("Set-Cookie", [
+        `access_token=${which}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`,
+        `opaque=opaque-fixture; Path=/; Max-Age=86400`,
+      ]);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end("<title>Token fixture</title><h1>Cookie fixture</h1>");
+      return;
+    }
+    if (req.url.startsWith("/response-data")) {
+      responseHits++;
+      const url = new URL(req.url, "http://localhost");
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          messages: [
+            {
+              id: 12345,
+              body: url.searchParams.get("text") || "横断検索メッセージ",
+              thread_id: 987,
+            },
+          ],
+          untrusted: "<script>window.responseExecuted=true</script>",
+        }),
+      );
+      return;
+    }
     if (req.url === "/test-update/latest") {
       updateHits++;
       res.writeHead(releaseFixture.status, {
@@ -126,10 +175,13 @@ test.beforeAll(async () => {
 });
 test.afterAll(() => new Promise((resolve) => server.close(resolve)));
 
-async function launch(directory) {
+async function launch(directory, options = {}) {
   const application = await electron.launch({
-    ...(process.env.MSB_EXECUTABLE
-      ? { executablePath: process.env.MSB_EXECUTABLE, args: [] }
+    ...(options.executablePath || process.env.MSB_EXECUTABLE
+      ? {
+          executablePath: options.executablePath || process.env.MSB_EXECUTABLE,
+          args: [],
+        }
       : { args: [path.join(__dirname, "..")] }),
     env: {
       ...process.env,
@@ -2106,9 +2158,9 @@ test("running version, memory totals, warning dismissal and preferences are visi
     application = launched.application;
     let shell = launched.shell;
     const state = await command(shell, "sample-memory");
-    expect(state.appInfo.version).toBe("0.5.0");
+    expect(state.appInfo.version).toBe("0.6.0");
     expect(state.memory.bytes).toBeGreaterThan(0);
-    await expect(shell.locator("#app-info")).toHaveText("v0.5.0");
+    await expect(shell.locator("#app-info")).toHaveText("v0.6.0");
     await application.evaluate(({ app }) => {
       app.getAppMetrics = () => [
         { pid: process.pid, memory: { workingSetSize: 3 * 1024 * 1024 } },
@@ -2137,7 +2189,7 @@ test("running version, memory totals, warning dismissal and preferences are visi
     await expect(shell.locator("#memory-warning")).toBeVisible();
     await shell.locator("#app-info").click();
     await expect(
-      shell.getByText("Multisession Browser v0.5.0", { exact: true }),
+      shell.getByText("Multisession Browser v0.6.0", { exact: true }),
     ).toBeVisible();
     await shell
       .getByLabel("メモリ警告（MiB、0で無効）", { exact: true })
@@ -2173,11 +2225,11 @@ test("startup and manual updates compare GitHub releases and show failures witho
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-update-"));
   let application;
   const url =
-    "https://github.com/kirishima677/multisession-browser/releases/tag/v0.6.0";
+    "https://github.com/kirishima677/multisession-browser/releases/tag/v0.7.0";
   releaseFixture = {
     status: 200,
     body: {
-      tag_name: "v0.6.0",
+      tag_name: "v0.7.0",
       html_url: url,
       draft: false,
       prerelease: false,
@@ -2188,7 +2240,7 @@ test("startup and manual updates compare GitHub releases and show failures witho
     application = launched.application;
     const shell = launched.shell;
     await expect(shell.locator("#update-notice")).toBeVisible();
-    await expect(shell.locator("#app-info")).toHaveText("v0.5.0");
+    await expect(shell.locator("#app-info")).toHaveText("v0.6.0");
     await application.evaluate(({ shell }) => {
       globalThis.openedRelease = "";
       shell.openExternal = async (url) => {
@@ -2200,7 +2252,7 @@ test("startup and manual updates compare GitHub releases and show failures witho
       url,
     );
     await shell.locator("#app-info").click();
-    releaseFixture.body.tag_name = "v0.5.0";
+    releaseFixture.body.tag_name = "v0.6.0";
     await shell
       .getByRole("button", { name: "今すぐ更新を確認", exact: true })
       .click();
@@ -2228,6 +2280,397 @@ test("startup and manual updates compare GitHub releases and show failures witho
     await site(application, "/update-browsing");
   } finally {
     releaseFixture = { status: 404, body: {} };
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+async function toolsPage(application) {
+  await expect
+    .poll(() =>
+      application
+        .windows()
+        .some((p) => p.url().endsWith("/src/test-tools.html")),
+    )
+    .toBe(true);
+  const page = application
+    .windows()
+    .find((p) => p.url().endsWith("/src/test-tools.html"));
+  await page.waitForFunction(() => Boolean(window.testTools));
+  await page.waitForLoadState();
+  return page;
+}
+async function toolCommand(page, action, payload = {}) {
+  const result = await page.evaluate(
+    ([action, payload]) => testTools.invoke(action, payload),
+    [action, payload],
+  );
+  expect(result.error).toBeUndefined();
+  return result;
+}
+async function interceptClipboard(application) {
+  await application.evaluate(({ clipboard }) => {
+    globalThis.testClipboard = "";
+    clipboard.writeText = (value) => {
+      globalThis.testClipboard = value;
+    };
+  });
+}
+function cookieDB(directory, id) {
+  return fs
+    .readdirSync(directory, { recursive: true })
+    .map((p) => path.join(directory, p))
+    .find((p) => p.includes(id) && path.basename(p) === "Cookies");
+}
+function storedCookie(file, name) {
+  const { DatabaseSync } = require("node:sqlite");
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        "select name, value, length(encrypted_value) as encryptedBytes from cookies where name=?",
+      )
+      .get(name);
+  } finally {
+    db.close();
+  }
+}
+test("JWT tools select HttpOnly candidates by contents, copy the current value and encrypt manual tokens across restarts", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-auth-tools-"));
+  let application;
+  const manualToken = sampleJWT({
+    alumni_id: 303,
+    company_name: "手入力テナント",
+    exp: Math.floor(Date.now() / 1000) - 60,
+  });
+  try {
+    let launched = await launch(directory);
+    application = launched.application;
+    let shell = launched.shell;
+    const initial = await command(shell, "state"),
+      a = initial.sessions[0],
+      b = initial.sessions[1];
+    expect(initial.protection.persistentAllowed).toBe(true);
+    await command(shell, "navigate", { url: `${baseURL}/tokens/login` });
+    let browser = await site(application, "/tokens/login");
+    expect(await browser.evaluate(() => document.cookie)).not.toContain(
+      "access_token",
+    );
+    await shell.locator("#open-auth").click();
+    let tools = await toolsPage(application);
+    await expect
+      .poll(
+        async () =>
+          (
+            await toolCommand(tools, "auth-list", {
+              sessionId: a.id,
+              url: `${baseURL}/tokens/login`,
+            })
+          ).candidates.length,
+      )
+      .toBe(1);
+    await expect(tools.locator("#candidate")).toContainText("access_token");
+    const candidates = await toolCommand(tools, "auth-list", {
+      sessionId: a.id,
+      url: `${baseURL}/tokens/login`,
+    });
+    expect(candidates.candidates[0].info.claims.alumni_id).toBe(101);
+    expect(candidates.candidates[0].preview).not.toBe(tokenA);
+    await tools
+      .locator("#candidate")
+      .selectOption(candidates.candidates[0].key);
+    await expect(tools.locator("#copy-token")).toBeEnabled();
+    await interceptClipboard(application);
+    await tools.locator("#copy-token").click();
+    expect(await application.evaluate(() => globalThis.testClipboard)).toBe(
+      tokenA,
+    );
+    await browser.evaluate(() => fetch("/tokens/refresh"));
+    await tools.locator("#copy-token").click();
+    expect(await application.evaluate(() => globalThis.testClipboard)).toBe(
+      tokenB,
+    );
+    await tools.locator("#copy-cookie").click();
+    expect(await application.evaluate(() => globalThis.testClipboard)).toBe(
+      `access_token=${tokenB}`,
+    );
+    const other = await toolCommand(tools, "auth-list", {
+      sessionId: b.id,
+      url: `${baseURL}/tokens/login`,
+    });
+    expect(other.candidates).toEqual([]);
+    await expect
+      .poll(async () =>
+        (await command(shell, "state")).auth.some((s) =>
+          s.summary.includes("202"),
+        ),
+      )
+      .toBe(true);
+    await tools.locator("#manual-value").fill(manualToken);
+    await tools.locator("#manual-save").check();
+    await tools.locator("#manual-apply").click();
+    await expect(tools.locator("#candidate-meta")).toContainText(
+      "暗号化して保存済み",
+    );
+    await expect(tools.locator("#candidate-meta")).toContainText("期限切れ");
+    await tools.locator("#reveal-token").click();
+    await expect(tools.locator("#token-visible")).toHaveValue(manualToken);
+    expect(
+      fs.readFileSync(path.join(directory, "tokens.enc.json"), "utf8"),
+    ).not.toContain(manualToken);
+    expect(
+      fs.readFileSync(path.join(directory, "workspace.json"), "utf8"),
+    ).not.toContain(manualToken);
+    expect(
+      await tools.evaluate(() => [
+        typeof require,
+        typeof browserAPI,
+        typeof apiClient,
+        typeof terminalAPI,
+      ]),
+    ).toEqual(["undefined", "undefined", "undefined", "undefined"]);
+    await tools.screenshot({ path: "test-results/jwt-tools.png" });
+    await application.close();
+    application = null;
+    const db = storedCookie(cookieDB(directory, a.id), "access_token");
+    expect(db.value).toBe("");
+    expect(db.encryptedBytes).toBeGreaterThan(0);
+    launched = await launch(directory);
+    application = launched.application;
+    shell = launched.shell;
+    await command(shell, "open-test-tools", { page: "auth", sessionId: a.id });
+    tools = await toolsPage(application);
+    await expect(tools.locator("#candidate-meta")).toContainText(
+      "暗号化して保存済み",
+    );
+    await tools.locator("#reveal-token").click();
+    await expect(tools.locator("#token-visible")).toHaveValue(manualToken);
+    await tools.locator("#manual-save").uncheck();
+    await tools.locator("#manual-value").fill("opaque-manual-only");
+    await tools.locator("#manual-apply").click();
+    await expect(tools.locator("#candidate-meta")).toContainText(
+      "この起動中のみ",
+    );
+    expect(
+      fs.readFileSync(path.join(directory, "tokens.enc.json"), "utf8"),
+    ).not.toContain("opaque-manual-only");
+    const all = await toolCommand(tools, "auth-list", {
+      sessionId: a.id,
+      url: `${baseURL}/tokens/login`,
+      all: true,
+    });
+    expect(all.candidates.some((c) => c.name === "opaque")).toBe(true);
+    await command(shell, "edit-session", {
+      id: b.id,
+      name: "更新したセッションB",
+      color: b.color,
+    });
+    await expect(tools.locator("#auth-session")).toContainText(
+      "更新したセッションB",
+    );
+    await command(shell, "delete-session", { id: b.id });
+    await expect(tools.locator("#auth-session")).not.toContainText(
+      "更新したセッションB",
+    );
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("response tools search Web and API bodies across tabs without replay, coexist with DevTools and copy selected text", async () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "msb-response-tools-"),
+  );
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    const initial = await command(shell, "state"),
+      a = initial.sessions[0],
+      b = initial.sessions[1];
+    await command(shell, "navigate", { url: `${baseURL}/response-page-a` });
+    const pageA = await site(application, "/response-page-a");
+    const aID = (await command(shell, "state")).activeId;
+    await command(shell, "create-tab", {
+      sessionId: b.id,
+      url: `${baseURL}/response-page-b`,
+    });
+    const pageB = await site(application, "/response-page-b");
+    await shell.locator("#open-network").click();
+    const tools = await toolsPage(application);
+    await tools.locator("#recording").click();
+    await expect(tools.locator("#recording-state")).toContainText("記録中");
+    await pageA.evaluate(() =>
+      fetch("/response-data?text=横断検索_利用者A").then((r) => r.json()),
+    );
+    await pageB.evaluate(() =>
+      fetch("/response-data?text=横断検索_利用者B").then((r) => r.json()),
+    );
+    await expect
+      .poll(
+        async () =>
+          (await toolCommand(tools, "search", { query: "横断検索_利用者" }))
+            .total,
+      )
+      .toBe(2);
+    const found = await toolCommand(tools, "search", {
+      query: "横断検索_利用者",
+    });
+    expect(new Set(found.results.map((r) => r.sessionId)).size).toBe(2);
+    await command(shell, "select-tab", { id: aID });
+    await command(shell, "devtools");
+    await expect
+      .poll(() =>
+        application.evaluate(({ webContents }) =>
+          webContents
+            .getAllWebContents()
+            .some(
+              (c) =>
+                c.getURL().includes("/response-page-a") && c.isDevToolsOpened(),
+            ),
+        ),
+      )
+      .toBe(true);
+    await pageA.evaluate(() =>
+      fetch("/response-data?text=DevTools併用検索").then((r) => r.json()),
+    );
+    await expect
+      .poll(
+        async () =>
+          (await toolCommand(tools, "search", { query: "DevTools併用検索" }))
+            .total,
+      )
+      .toBe(1);
+    expect(
+      await application.evaluate(({ webContents }) =>
+        webContents
+          .getAllWebContents()
+          .some(
+            (c) =>
+              c.getURL().includes("/response-page-a") && c.isDevToolsOpened(),
+          ),
+      ),
+    ).toBe(true);
+    await command(shell, "create-api-tab", {
+      sessionId: a.id,
+      request: { url: `${baseURL}/response-data?text=APIタブの検索結果` },
+    });
+    const api = await apiPage(application);
+    await apiCommand(api, "send", {
+      draft: { url: `${baseURL}/response-data?text=APIタブの検索結果` },
+    });
+    await response(api);
+    await expect
+      .poll(
+        async () =>
+          (await toolCommand(tools, "search", { query: "APIタブの検索結果" }))
+            .total,
+      )
+      .toBe(1);
+    const hitCount = responseHits;
+    await tools.locator("#query").fill("横断検索_利用者A");
+    await tools.getByRole("button", { name: "検索", exact: true }).click();
+    await expect(tools.locator(".result")).toHaveCount(1);
+    await tools.locator(".result").click();
+    await expect(tools.locator("#response-body")).toHaveValue(/"id": 12345/);
+    const body = tools.locator("#response-body");
+    await body.evaluate((el) => {
+      const start = el.value.indexOf("12345");
+      el.setSelectionRange(start, start + 5);
+    });
+    await interceptClipboard(application);
+    await tools.locator("#copy-selected").click();
+    expect(await application.evaluate(() => globalThis.testClipboard)).toBe(
+      "12345",
+    );
+    expect(await tools.evaluate(() => window.responseExecuted)).toBeUndefined();
+    await tools.locator("#activate-source").click();
+    expect((await command(shell, "state")).activeId).toBe(aID);
+    expect(responseHits).toBe(hitCount);
+    await tools.screenshot({ path: "test-results/response-search.png" });
+    await tools.locator("#recording").click();
+    await expect(tools.locator("#recording-state")).toContainText("停止中");
+    await pageA.evaluate(() =>
+      fetch("/response-data?text=停止後は未記録").then((r) => r.json()),
+    );
+    expect(
+      (await toolCommand(tools, "search", { query: "停止後は未記録" })).total,
+    ).toBe(0);
+    await tools.locator("#clear-responses").click();
+    expect((await toolCommand(tools, "state")).capture.count).toBe(0);
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("existing plaintext Cookie sessions migrate to encrypted storage while retaining logins and site storage", async () => {
+  const legacy =
+    process.env.MSB_LEGACY_EXECUTABLE ||
+    "/Users/nishiokahiroki/code/multisession-browser/dist/v0.5.0/mac-arm64/Multisession Browser.app/Contents/MacOS/Multisession Browser";
+  test.skip(
+    !fs.existsSync(legacy),
+    "Ver 0.5.0 executable is required to create a genuine legacy profile.",
+  );
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "msb-cookie-upgrade-"),
+  );
+  let application;
+  try {
+    let launched = await launch(directory, { executablePath: legacy });
+    application = launched.application;
+    let shell = launched.shell;
+    const a = (await command(shell, "state")).sessions[0];
+    await command(shell, "navigate", { url: `${baseURL}/tokens/login` });
+    let browser = await site(application, "/tokens/login");
+    await browser.evaluate(() =>
+      localStorage.setItem("migration-data", "retain-this"),
+    );
+    await application.close();
+    application = null;
+    const file = cookieDB(directory, a.id),
+      before = storedCookie(file, "access_token");
+    expect(before.value).toBe(tokenA);
+    expect(before.encryptedBytes).toBe(0);
+    launched = await launch(directory);
+    application = launched.application;
+    shell = launched.shell;
+    const security = (await command(shell, "state")).protection;
+    expect(security.cookieEncryption).toBe(true);
+    expect(security.persistentAllowed).toBe(true);
+    expect(security.migratedCookies).toBeGreaterThan(0);
+    await command(shell, "navigate", { url: `${baseURL}/migration-check` });
+    browser = await site(application, "/migration-check");
+    expect(
+      await browser.evaluate(() => localStorage.getItem("migration-data")),
+    ).toBe("retain-this");
+    expect(
+      await browser.evaluate(() =>
+        fetch("/test-api/echo")
+          .then((r) => r.json())
+          .then((r) => r.cookies),
+      ),
+    ).toContain(`access_token=${tokenA}`);
+    await application.close();
+    application = null;
+    const after = storedCookie(file, "access_token");
+    expect(after.value).toBe("");
+    expect(after.encryptedBytes).toBeGreaterThan(0);
+    launched = await launch(directory);
+    application = launched.application;
+    shell = launched.shell;
+    await command(shell, "navigate", { url: `${baseURL}/migration-restart` });
+    browser = await site(application, "/migration-restart");
+    expect(
+      await browser.evaluate(() =>
+        fetch("/test-api/echo")
+          .then((r) => r.json())
+          .then((r) => r.cookies),
+      ),
+    ).toContain(`access_token=${tokenA}`);
+  } finally {
     if (application) await application.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }

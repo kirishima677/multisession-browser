@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>認証・応答検索</title>
+    <link rel="stylesheet" href="test-tools.css" />
+    <script src="test-tools-ui.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="eyebrow">TEST WORKSPACE</span>
+        <h1>認証・応答検索</h1>
+      </div>
+      <nav>
+        <button id="auth-tab" class="selected">JWT・トークン</button
+        ><button id="network-tab">応答検索</button>
+      </nav>
+    </header>
+    <p id="tools-error" role="alert" hidden></p>
+    <p id="tools-message" role="status" hidden></p>
+    <main id="auth-panel">
+      <section class="card">
+        <h2>認証情報を選ぶ</h2>
+        <p class="help">
+          Cookieの候補を選択するか、トークンを直接入力します。選択はセッション・サイトごとに管理します。
+        </p>
+        <div class="context">
+          <label
+            >セッション<select
+              id="auth-session"
+              aria-label="認証のセッション"
+            ></select></label
+          ><label class="grow"
+            >対象サイトのURL<input
+              id="auth-url"
+              aria-label="認証の対象URL"
+              placeholder="https://example.com/api/" /></label
+          ><button id="auth-refresh">候補を取得</button>
+        </div>
+        <label class="check"
+          ><input
+            type="checkbox"
+            id="all-cookies"
+          />JWT形式以外のCookieも表示</label
+        ><label for="candidate">Cookie・トークンの候補</label
+        ><select id="candidate" aria-label="Cookie・トークンの候補">
+          <option value="">候補を取得してください</option>
+        </select>
+        <div id="candidate-meta" class="candidate-meta"></div>
+        <div class="buttons">
+          <button id="copy-token" disabled>値をコピー</button
+          ><button id="copy-cookie" disabled>Cookie形式をコピー</button
+          ><button id="reveal-token" disabled>値を表示</button>
+        </div>
+        <textarea
+          id="token-visible"
+          aria-label="選択したトークンの値"
+          readonly
+          hidden
+        ></textarea>
+        <p class="help">
+          Cookie形式は name=value です。コピー時に最新のCookieを読み直します。
+        </p>
+        <details>
+          <summary>JWTの内容（署名・有効性は未検証）</summary>
+          <pre id="claims">候補を選択すると表示します。</pre>
+        </details>
+      </section>
+      <section class="card">
+        <h2>トークンを直接入力</h2>
+        <div class="context">
+          <label
+            >Cookie形式の名前<input
+              id="manual-name"
+              aria-label="手入力トークンのCookie名"
+              value="jwt"
+              maxlength="128" /></label
+          ><label class="grow"
+            >トークン<input
+              type="password"
+              id="manual-value"
+              aria-label="手入力トークン"
+              autocomplete="off"
+              spellcheck="false"
+              maxlength="16384"
+          /></label>
+        </div>
+        <label class="check"
+          ><input type="checkbox" id="manual-save" />暗号化して次回も使う</label
+        ><button id="manual-apply">このトークンを使用</button>
+        <p class="help">
+          手入力の値でブラウザのCookieは変更しません。保存を選ばなければ、この起動中だけ保持します。
+        </p>
+        <p id="protection" class="help"></p>
+      </section>
+    </main>
+    <main id="network-panel" hidden>
+      <section class="card">
+        <div class="heading-row">
+          <div>
+            <h2>応答の横断検索</h2>
+            <p id="recording-state" role="status"></p>
+          </div>
+          <div class="buttons">
+            <button id="recording" class="primary">記録を開始</button
+            ><button id="clear-responses">記録をクリア</button>
+          </div>
+        </div>
+        <p class="help">
+          開始後のWebタブのXHR/fetchとAPIタブのJSON・テキスト応答を記録します。本文は1件1
+          MiB、全体20
+          MiB・300件まで、メモリ内で保持します。検索や表示では通信を再送しません。
+        </p>
+        <form id="search-form">
+          <div class="search-line">
+            <input
+              id="query"
+              aria-label="応答本文の検索文字列"
+              placeholder="メッセージの内容やIDを入力"
+              maxlength="512"
+            /><select
+              id="search-session"
+              aria-label="検索対象セッション"
+            ></select
+            ><select id="search-tab" aria-label="検索対象タブ"></select
+            ><button class="primary" type="submit">検索</button>
+          </div>
+        </form>
+        <p id="capture-errors" class="help" hidden></p>
+      </section>
+      <div class="search-layout">
+        <section class="card results">
+          <h2 id="results-count">記録した応答</h2>
+          <div id="results"></div>
+        </section>
+        <section class="card response">
+          <div class="heading-row">
+            <h2>応答本文</h2>
+            <button id="activate-source" disabled>該当タブへ移動</button>
+          </div>
+          <p id="response-meta" class="help">検索結果を選択してください。</p>
+          <p id="response-note" class="help" hidden></p>
+          <div class="buttons">
+            <button id="copy-selected" disabled>選択部分をコピー</button
+            ><button id="copy-body" disabled>本文をコピー</button>
+          </div>
+          <textarea
+            id="response-body"
+            aria-label="応答本文"
+            readonly
+            spellcheck="false"
+            wrap="off"
+          ></textarea>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

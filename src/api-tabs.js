@@ -12,6 +12,7 @@ function createApiTabs({
   getConfig,
   profileFor,
   getSession,
+  onResult,
   persist,
   activate,
   layout,
@@ -129,6 +130,7 @@ function createApiTabs({
       .then((result) => {
         if (tabs.get(t.id) !== t || t.apiJob !== job) return;
         t.response = { id: randomUUID(), ...result };
+        onResult?.(t, result, createdAt);
         t.history.unshift({
           id: randomUUID(),
           createdAt,

@@ -828,3 +828,26 @@ dialog .help {
 #modal-body input[type="checkbox"] {
   width: auto;
 }
+
+.title-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.session-auth {
+  font-size: 9px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: #8491aa;
+}
+.session-auth-status {
+  display: block;
+  font-size: 9px;
+  color: #8893a8;
+  margin-top: 3px;
+  max-width: 125px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

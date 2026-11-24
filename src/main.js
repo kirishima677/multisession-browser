@@ -9,6 +9,7 @@ const {
   clipboard,
   nativeImage,
   shell,
+  safeStorage,
 } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -20,6 +21,10 @@ const { createTerminalTabs } = require("./terminal-tabs");
 const { createMemoryMonitor } = require("./memory-monitor");
 const { createUpdateChecker } = require("./updates");
 const { preferences } = require("./runtime-model");
+const { createProtection } = require("./protection");
+const { createAuthManager } = require("./auth-manager");
+const { createNetworkCapture } = require("./network-capture");
+const { createTestTools } = require("./test-tools");
 const { reorderIds, splitForDrop, selectInSplit } = require("./tab-layout");
 const {
   COLORS,
@@ -42,6 +47,7 @@ let stateRevision = 0;
 let pageActions;
 let apiTabs;
 let terminalTabs, memoryMonitor, updateChecker;
+let protection, authManager, capture, testTools;
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
 const appIconPath = path.join(__dirname, "..", "assets", "icon.png");
 const sitePreload = path.join(__dirname, "site-preload.js");
@@ -121,6 +127,8 @@ function runtime() {
     preferences: config.preferences,
     memory: memoryMonitor?.get() || null,
     update: updateChecker?.get() || null,
+    protection: protection?.status() || null,
+    auth: authManager?.summaries() || [],
   };
 }
 function publishRuntime() {
@@ -129,6 +137,7 @@ function publishRuntime() {
 }
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send("browser:state", state());
+  testTools?.publish();
 }
 function activateTab(id) {
   split = selectInSplit(split, activeId, id);
@@ -160,12 +169,17 @@ function layout() {
 }
 function configuredSession(profile) {
   const partition = partitionFor(
-    profile,
+    {
+      ...profile,
+      persistent:
+        profile.persistent && Boolean(protection?.status().persistentAllowed),
+    },
     `${runId}-${tempEpochs.get(profile.id) || 0}`,
   );
   const ses = session.fromPartition(partition);
   if (configured.has(partition)) return ses;
   configured.add(partition);
+  authManager?.watch(ses, profile.id);
   ses.setPermissionCheckHandler(() => false);
   ses.setPermissionRequestHandler((contents, permission, callback, details) => {
     let origin = details.requestingUrl || contents?.getURL() || "";
@@ -220,6 +234,7 @@ function configuredSession(profile) {
   return ses;
 }
 function guardContents(contents, profile) {
+  capture?.track(contents, profile.id);
   installKeyboard(contents);
   installContextMenu(contents, profile);
   contents.on("will-navigate", (event, url) => {
@@ -393,6 +408,7 @@ function installContextMenu(contents, profile) {
       clipboard,
       nativeImage,
       shell,
+      safeStorage,
       browserPage: Boolean(profile),
       openTab: profile ? (url) => createTab(profile.id, url) : undefined,
       download: profile
@@ -463,6 +479,8 @@ async function resetSession(id, remove) {
   // clearData also removes service workers, caches and network credentials.
   await ses.clearData();
   await ses.clearAuthCache();
+  await authManager.clearSession(id);
+  capture.clear(id);
   if (remove) {
     config.sessions = config.sessions.filter((s) => s.id !== id);
     config.apiRequests = config.apiRequests.filter((r) => r.sessionId !== id);
@@ -484,6 +502,26 @@ async function command(action, p = {}) {
       if (overlay) draggingTab = false;
       layout();
       break;
+    case "open-test-tools": {
+      const page = p.page || "auth";
+      if (!["auth", "network"].includes(page))
+        throw new Error("ツールの種類が不正です。");
+      const id = p.sessionId || current()?.sessionId || config.sessions[0].id;
+      profileFor(id);
+      const t = [...tabs.values()]
+        .reverse()
+        .find((t) => t.sessionId === id && t.kind !== "terminal");
+      const url =
+        t?.kind === "api" ? t.request.url : t?.view.webContents.getURL();
+      testTools.open({
+        page,
+        sessionId: id,
+        url: /^https?:\/\//.test(url || "")
+          ? url
+          : config.authBindings.find((b) => b.sessionId === id)?.url || "",
+      });
+      break;
+    }
     case "create-terminal-tab":
       terminalTabs.create(
         p.sessionId || current()?.sessionId || config.sessions[0].id,
@@ -848,6 +886,15 @@ function installMenu() {
         label: "表示",
         submenu: [
           {
+            label: "JWT・トークンを確認…",
+            click: () => command("open-test-tools", { page: "auth" }),
+          },
+          {
+            label: "応答を横断検索…",
+            click: () => command("open-test-tools", { page: "network" }),
+          },
+          { type: "separator" },
+          {
             label: "ページ内を検索…",
             accelerator: "CmdOrCtrl+F",
             click: () =>
@@ -924,7 +971,7 @@ app.on("second-instance", () => {
     win.focus();
   } else if (config) createWindow();
 });
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!primaryInstance) return;
   if (process.platform === "darwin") {
     const icon = nativeImage.createFromPath(appIconPath);
@@ -970,6 +1017,84 @@ app.whenReady().then(() => {
       if (action !== "state") mutation = false;
     }
   });
+  protection = createProtection({
+    safeStorage,
+    directory: app.getPath("userData"),
+  });
+  await protection.init();
+  const describe = (contents) => {
+    const t = originatingTab(contents);
+    return {
+      tabId: t?.id || "",
+      contentsId: contents.id,
+      title: contents.isDestroyed()
+        ? "閉じたタブ"
+        : contents.getTitle() || t?.title || "タブ",
+    };
+  };
+  capture = createNetworkCapture({
+    describe,
+    publish: () => testTools?.publish(),
+  });
+  authManager = createAuthManager({
+    getConfig: () => config,
+    profileFor,
+    getSession: configuredSession,
+    protection,
+    persist,
+    publish: () => {
+      publishRuntime();
+      testTools?.publish();
+    },
+  });
+  testTools = createTestTools({
+    getConfig: () => config,
+    getTabs: () =>
+      [...tabs.values()].map((t) => ({
+        id: t.id,
+        title: t.title || "新しいタブ",
+        sessionId: t.sessionId,
+      })),
+    auth: authManager,
+    capture,
+    protection,
+    securePreferences,
+    installContextMenu,
+    activateSource: (record) => {
+      if (overlay)
+        throw new Error("設定・構成の画面を閉じてから移動してください。");
+      const popup = [...popups.values()].find(
+        (p) =>
+          !p.window.isDestroyed() &&
+          p.window.webContents.id === record.contentsId,
+      );
+      if (popup) {
+        popup.window.show();
+        popup.window.focus();
+        return;
+      }
+      const t = tabs.get(record.tabId);
+      if (!t || !win) throw new Error("元のタブは閉じられています。");
+      activateTab(t.id);
+      win.show();
+      win.focus();
+      layout();
+      if (t.view.getVisible()) t.view.webContents.focus();
+      publish();
+    },
+  });
+  try {
+    for (const profile of config.sessions)
+      if (profile.persistent)
+        await protection.migrateCookies(configuredSession(profile), profile.id);
+  } catch {
+    dialog.showErrorBox(
+      "Cookieの暗号化に失敗しました",
+      "既存データの読み書きを中止しました。OSの鍵管理へのアクセスを確認して再起動してください。",
+    );
+    app.quit();
+    return;
+  }
   pageActions = createPageActions(() => win);
   apiTabs = createApiTabs({
     tabs,
@@ -977,6 +1102,7 @@ app.whenReady().then(() => {
     getConfig: () => config,
     profileFor,
     getSession: configuredSession,
+    onResult: (t, result, createdAt) => capture.apiResult(t, result, createdAt),
     persist,
     activate: activateTab,
     layout,
@@ -1009,6 +1135,7 @@ app.whenReady().then(() => {
   });
   installMenu();
   createWindow();
+  authManager.init();
   memoryMonitor.start();
   if (config.preferences.checkUpdatesOnStartup) updateChecker.check();
   app.on("activate", () => {
@@ -1022,4 +1149,6 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   terminalTabs?.shutdown();
   memoryMonitor?.stop();
+  capture?.stop();
+  testTools?.close();
 });
