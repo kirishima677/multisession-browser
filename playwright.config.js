@@ -1,0 +1,8 @@
+module.exports = {
+  testDir: "./test",
+  testMatch: "browser.spec.js",
+  timeout: 45000,
+  workers: 1,
+  reporter: "list",
+  use: { trace: "retain-on-failure" },
+};

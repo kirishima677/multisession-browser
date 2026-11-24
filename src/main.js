@@ -1,0 +1,646 @@
+const {
+  app,
+  BrowserWindow,
+  WebContentsView,
+  ipcMain,
+  session,
+  dialog,
+  Menu,
+} = require("electron");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const { randomUUID } = require("node:crypto");
+const {
+  COLORS,
+  label,
+  normalizeURL,
+  allowedNavigation,
+  makeSession,
+  partitionFor,
+  ConfigStore,
+} = require("./model");
+
+if (process.env.MSB_USER_DATA)
+  app.setPath("userData", path.resolve(process.env.MSB_USER_DATA));
+app.setName("Multisession Browser");
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+const runId = randomUUID();
+const chrome = { sidebar: 236, top: 152, bottom: 28 };
+const shellURL = pathToFileURL(path.join(__dirname, "index.html")).href;
+let win,
+  config,
+  store,
+  activeId,
+  overlay = false,
+  mutation = false;
+const tabs = new Map();
+const configured = new Set();
+const popups = new Map();
+const tempEpochs = new Map();
+const securePreferences = {
+  nodeIntegration: false,
+  contextIsolation: true,
+  sandbox: true,
+  webSecurity: true,
+};
+
+function persist() {
+  store.save(config);
+}
+function profileFor(id) {
+  const profile = config.sessions.find((s) => s.id === id);
+  if (!profile) throw new Error("セッションが見つかりません。");
+  return profile;
+}
+function current() {
+  return tabs.get(activeId);
+}
+function state() {
+  return {
+    sessions: config.sessions,
+    worksets: config.worksets,
+    colors: COLORS,
+    activeId,
+    tabs: [...tabs.values()].map((t) => ({
+      id: t.id,
+      sessionId: t.sessionId,
+      title: t.title || "新しいタブ",
+      url: t.view.webContents.getURL() || "about:blank",
+      loading: t.view.webContents.isLoading(),
+      error: t.error || "",
+      canGoBack: t.view.webContents.navigationHistory.canGoBack(),
+      canGoForward: t.view.webContents.navigationHistory.canGoForward(),
+    })),
+  };
+}
+function publish() {
+  if (win && !win.isDestroyed()) win.webContents.send("browser:state", state());
+}
+function layout() {
+  if (!win || win.isDestroyed()) return;
+  const [width, height] = win.getContentSize();
+  for (const t of tabs.values()) {
+    t.view.setBounds({
+      x: chrome.sidebar,
+      y: chrome.top,
+      width: Math.max(0, width - chrome.sidebar),
+      height: Math.max(0, height - chrome.top - chrome.bottom),
+    });
+    const visible =
+      t.id === activeId &&
+      !overlay &&
+      t.view.webContents.getURL() !== "about:blank";
+    t.view.setVisible(visible);
+  }
+}
+function configuredSession(profile) {
+  const partition = partitionFor(
+    profile,
+    `${runId}-${tempEpochs.get(profile.id) || 0}`,
+  );
+  const ses = session.fromPartition(partition);
+  if (configured.has(partition)) return ses;
+  configured.add(partition);
+  ses.setPermissionCheckHandler(() => false);
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    let origin = details.requestingUrl || contents?.getURL() || "";
+    try {
+      origin = new URL(origin).origin;
+    } catch {
+      origin = "不明なサイト";
+    }
+    const ask =
+      win &&
+      !win.isDestroyed() &&
+      [
+        "media",
+        "geolocation",
+        "notifications",
+        "clipboard-sanitized-write",
+        "fullscreen",
+      ].includes(permission);
+    if (!ask) return callback(false);
+    dialog
+      .showMessageBox(win, {
+        type: "question",
+        title: "サイトの権限",
+        message: `${profileFor(profile.id).name}：${permission} を許可しますか？`,
+        detail: origin,
+        buttons: ["許可しない", "今回のみ許可"],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      .then(
+        (result) => callback(result.response === 1),
+        () => callback(false),
+      );
+  });
+  ses.on("will-download", (_event, item) => {
+    item.setSaveDialogOptions({
+      title: `${profileFor(profile.id).name} — ダウンロード`,
+      defaultPath: path.join(
+        app.getPath("downloads"),
+        path.basename(item.getFilename()),
+      ),
+    });
+  });
+  return ses;
+}
+function guardContents(contents, profile) {
+  installKeyboard(contents);
+  contents.on("will-navigate", (event, url) => {
+    if (!allowedNavigation(url)) event.preventDefault();
+  });
+  contents.on("will-redirect", (event, url) => {
+    if (!allowedNavigation(url)) event.preventDefault();
+  });
+  contents.on("will-attach-webview", (event) => event.preventDefault());
+  contents.setWindowOpenHandler((details) => {
+    if (!allowedNavigation(details.url)) return { action: "deny" };
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        parent: win,
+        width: 1000,
+        height: 760,
+        autoHideMenuBar: true,
+        webPreferences: {
+          ...securePreferences,
+          session: configuredSession(profile),
+        },
+      },
+    };
+  });
+  contents.on("did-create-window", (child) => {
+    popups.set(child.id, {
+      window: child,
+      sessionId: profile.id,
+      openerId: contents.id,
+    });
+    guardContents(child.webContents, profile);
+    const title = () =>
+      child.setTitle(
+        `${profileFor(profile.id).name} — ${child.webContents.getTitle() || "Popup"}`,
+      );
+    child.webContents.on("page-title-updated", (event) => {
+      event.preventDefault();
+      title();
+    });
+    title();
+    child.on("closed", () => popups.delete(child.id));
+  });
+}
+function createTab(sessionId, value = "about:blank") {
+  const profile = profileFor(sessionId);
+  const url = normalizeURL(value);
+  const view = new WebContentsView({
+    webPreferences: {
+      ...securePreferences,
+      session: configuredSession(profile),
+    },
+  });
+  const t = {
+    id: randomUUID(),
+    sessionId,
+    view,
+    title: "新しいタブ",
+    error: "",
+  };
+  tabs.set(t.id, t);
+  win.contentView.addChildView(view);
+  view.setBackgroundColor("#ffffff");
+  guardContents(view.webContents, profile);
+  const update = () => {
+    layout();
+    publish();
+  };
+  view.webContents.on("page-title-updated", (_event, title) => {
+    t.title = title;
+    publish();
+  });
+  view.webContents.on("did-start-loading", () => {
+    t.error = "";
+    update();
+  });
+  for (const event of [
+    "did-stop-loading",
+    "did-navigate",
+    "did-navigate-in-page",
+  ])
+    view.webContents.on(event, update);
+  view.webContents.on(
+    "did-fail-load",
+    (_event, code, description, _url, isMainFrame) => {
+      if (isMainFrame && code !== -3) {
+        t.error = `読み込みに失敗しました：${description} (${code})`;
+        update();
+      }
+    },
+  );
+  view.webContents.on("render-process-gone", () => {
+    t.error = "ページが停止しました。再読み込みしてください。";
+    update();
+  });
+  activeId = t.id;
+  view.webContents.loadURL(url).catch(() => {});
+  layout();
+  publish();
+  return t;
+}
+function closeTab(id, ensure = true) {
+  const t = tabs.get(id);
+  if (!t) return;
+  // Close dependent authentication windows before destroying their opener.
+  for (const { window: child, openerId } of [...popups.values()]) {
+    if (openerId === t.view.webContents.id) child.destroy();
+  }
+  win.contentView.removeChildView(t.view);
+  tabs.delete(id);
+  t.view.webContents.close({ waitForBeforeUnload: false });
+  if (activeId === id) activeId = [...tabs.keys()].at(-1);
+  if (ensure && !tabs.size) createTab(config.sessions[0].id);
+  layout();
+  publish();
+}
+function devtools() {
+  const t = current();
+  if (!t) return;
+  const contents = t.view.webContents;
+  if (contents.isDevToolsOpened()) {
+    contents.devToolsWebContents?.focus();
+    return;
+  }
+  contents.once("devtools-opened", () => {
+    const toolWindow = BrowserWindow.fromWebContents(
+      contents.devToolsWebContents,
+    );
+    toolWindow?.setTitle(`${profileFor(t.sessionId).name} — DevTools`);
+  });
+  contents.openDevTools({
+    mode: "detach",
+    title: `${profileFor(t.sessionId).name} — DevTools`,
+  });
+}
+async function confirm(message, detail) {
+  const result = await dialog.showMessageBox(win, {
+    type: "warning",
+    message,
+    detail,
+    buttons: ["キャンセル", "実行"],
+    defaultId: 0,
+    cancelId: 0,
+  });
+  return result.response === 1;
+}
+async function resetSession(id, remove) {
+  const profile = profileFor(id);
+  if (remove && config.sessions.length === 1)
+    throw new Error("最後のセッションは削除できません。");
+  if (
+    !(await confirm(
+      `${profile.name} を${remove ? "削除" : "初期化"}しますか？`,
+      "このセッションのタブとポップアップを閉じ、Cookie・ストレージ・キャッシュを削除します。サーバー上のデータは削除されません。",
+    ))
+  )
+    return;
+  for (const { window: child, sessionId } of [...popups.values()])
+    if (sessionId === id) child.destroy();
+  for (const t of [...tabs.values()])
+    if (t.sessionId === id) closeTab(t.id, false);
+  const ses = configuredSession(profile);
+  await ses.closeAllConnections();
+  // clearData also removes service workers, caches and network credentials.
+  await ses.clearData();
+  await ses.clearAuthCache();
+  if (remove) {
+    config.sessions = config.sessions.filter((s) => s.id !== id);
+    for (const w of config.worksets)
+      w.tabs = w.tabs.filter((t) => t.sessionId !== id);
+  }
+  persist();
+  if (!tabs.size) createTab((remove ? config.sessions[0] : profile).id);
+}
+async function command(action, p = {}) {
+  if (!p || typeof p !== "object") throw new Error("操作が不正です。");
+  switch (action) {
+    case "state":
+      break;
+    case "overlay":
+      overlay = Boolean(p.open);
+      layout();
+      break;
+    case "create-tab":
+      createTab(
+        p.sessionId || current()?.sessionId || config.sessions[0].id,
+        p.url,
+      );
+      break;
+    case "select-tab":
+      if (!tabs.has(p.id)) throw new Error("タブが見つかりません。");
+      activeId = p.id;
+      layout();
+      break;
+    case "close-tab":
+      closeTab(p.id || activeId);
+      break;
+    case "navigate": {
+      const t = current();
+      const url = normalizeURL(p.url);
+      if (t) {
+        t.error = "";
+        t.view.webContents.loadURL(url).catch(() => {});
+      }
+      break;
+    }
+    case "back":
+      if (current()?.view.webContents.navigationHistory.canGoBack())
+        current().view.webContents.navigationHistory.goBack();
+      break;
+    case "forward":
+      if (current()?.view.webContents.navigationHistory.canGoForward())
+        current().view.webContents.navigationHistory.goForward();
+      break;
+    case "reload":
+      current()?.view.webContents.reload();
+      break;
+    case "devtools":
+      devtools();
+      break;
+    case "create-session": {
+      const s = makeSession(p.name, p.persistent, p.color);
+      config.sessions.push(s);
+      persist();
+      createTab(s.id);
+      break;
+    }
+    case "edit-session": {
+      const s = profileFor(p.id);
+      const name = label(p.name);
+      if (!COLORS.includes(p.color)) throw new Error("色が不正です。");
+      s.name = name;
+      s.color = p.color;
+      persist();
+      break;
+    }
+    case "reset-session":
+      await resetSession(p.id, false);
+      break;
+    case "delete-session":
+      await resetSession(p.id, true);
+      break;
+    case "save-workset": {
+      const name = label(p.name);
+      config.worksets.push({
+        id: randomUUID(),
+        name,
+        tabs: [...tabs.values()].map((t) => ({
+          sessionId: t.sessionId,
+          url: normalizeURL(t.view.webContents.getURL()),
+        })),
+      });
+      persist();
+      break;
+    }
+    case "restore-workset": {
+      const w = config.worksets.find((w) => w.id === p.id);
+      if (!w?.tabs.length) throw new Error("復元するタブがありません。");
+      if (
+        !(await confirm(
+          `「${w.name}」を開きますか？`,
+          "現在のタブを閉じ、保存した構成を開きます。入力途中の内容は失われます。ログイン状態は初期化しません。一時セッションは新しい状態で開きます。",
+        ))
+      )
+        break;
+      for (const { window: child } of [...popups.values()]) child.destroy();
+      for (const t of [...tabs.values()]) closeTab(t.id, false);
+      for (const id of new Set(w.tabs.map((t) => t.sessionId))) {
+        const profile = profileFor(id);
+        if (!profile.persistent) {
+          const oldSession = configuredSession(profile);
+          await oldSession.closeAllConnections();
+          await oldSession.clearData();
+          await oldSession.clearAuthCache();
+          tempEpochs.set(id, (tempEpochs.get(id) || 0) + 1);
+        }
+      }
+      for (const t of w.tabs) createTab(t.sessionId, t.url);
+      activeId = [...tabs.keys()][0];
+      layout();
+      break;
+    }
+    case "delete-workset": {
+      if (
+        !(await confirm(
+          "作業セットを削除しますか？",
+          "セッションや現在のタブは削除されません。",
+        ))
+      )
+        break;
+      config.worksets = config.worksets.filter((w) => w.id !== p.id);
+      persist();
+      break;
+    }
+    default:
+      throw new Error("未対応の操作です。");
+  }
+  publish();
+  return state();
+}
+function shortcut(name) {
+  if (!win || win.isDestroyed()) return;
+  win.show();
+  win.focus();
+  win.webContents.focus();
+  win.webContents.send("browser:shortcut", name);
+}
+function installKeyboard(contents) {
+  contents.on("before-input-event", (event, input) => {
+    if (
+      input.type !== "keyDown" ||
+      !(process.platform === "darwin" ? input.meta : input.control)
+    )
+      return;
+    const key = input.key.toLowerCase();
+    let action;
+    if (!input.alt && !input.shift && key === "l")
+      action = () => shortcut("address");
+    if (!input.alt && !input.shift && key === "t")
+      action = () => shortcut("new-tab");
+    if (!input.alt && input.shift && key === "s")
+      action = () => shortcut("save-workset");
+    if (input.alt && !input.shift && key === "i") action = devtools;
+    if (!input.alt && !input.shift && key === "r")
+      action = () => current()?.view.webContents.reload();
+    if (!input.alt && !input.shift && key === "w")
+      action = () => {
+        const child = BrowserWindow.fromWebContents(contents);
+        if (child && child !== win) child.close();
+        else if (!overlay) command("close-tab");
+      };
+    if (action) {
+      event.preventDefault();
+      action();
+    }
+  });
+}
+function installMenu() {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: "about" },
+          { type: "separator" },
+          { role: "services" },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit" },
+        ],
+      },
+      {
+        label: "ファイル",
+        submenu: [
+          {
+            label: "新しいタブ",
+            accelerator: "CmdOrCtrl+T",
+            click: () => shortcut("new-tab"),
+          },
+          {
+            label: "タブを閉じる",
+            accelerator: "CmdOrCtrl+W",
+            click: () => {
+              const focused = BrowserWindow.getFocusedWindow();
+              if (focused && focused !== win) focused.close();
+              else if (!overlay) command("close-tab");
+            },
+          },
+          {
+            label: "作業セットを保存",
+            accelerator: "CmdOrCtrl+Shift+S",
+            click: () => shortcut("save-workset"),
+          },
+        ],
+      },
+      {
+        label: "編集",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "selectAll" },
+        ],
+      },
+      {
+        label: "表示",
+        submenu: [
+          {
+            label: "URLを入力",
+            accelerator: "CmdOrCtrl+L",
+            click: () => shortcut("address"),
+          },
+          {
+            label: "再読み込み",
+            accelerator: "CmdOrCtrl+R",
+            click: () => current()?.view.webContents.reload(),
+          },
+          {
+            label: "DevTools",
+            accelerator: "CmdOrCtrl+Alt+I",
+            click: devtools,
+          },
+          { type: "separator" },
+          { role: "togglefullscreen" },
+        ],
+      },
+      { role: "windowMenu" },
+    ]),
+  );
+}
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1360,
+    height: 900,
+    minWidth: 960,
+    minHeight: 640,
+    title: app.name,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 18, y: 20 },
+    backgroundColor: "#f5f6fa",
+    webPreferences: {
+      ...securePreferences,
+      preload: path.join(__dirname, "preload.js"),
+    },
+  });
+  installKeyboard(win.webContents);
+  win.webContents.on("will-navigate", (event) => event.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.on("resize", layout);
+  win.on("closed", () => {
+    for (const t of tabs.values())
+      if (!t.view.webContents.isDestroyed())
+        t.view.webContents.close({ waitForBeforeUnload: false });
+    tabs.clear();
+    activeId = undefined;
+    overlay = false;
+    win = null;
+  });
+  win.loadFile(path.join(__dirname, "index.html"));
+  createTab(config.sessions[0].id);
+}
+app.on("second-instance", () => {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  } else if (config) createWindow();
+});
+app.whenReady().then(() => {
+  if (!primaryInstance) return;
+  store = new ConfigStore(app.getPath("userData"));
+  try {
+    config = store.load();
+    persist();
+  } catch (error) {
+    dialog.showErrorBox(
+      "設定を読み込めません",
+      `${error.message}\n設定ファイルを確認してください：${store.file}`,
+    );
+    app.quit();
+    return;
+  }
+  ipcMain.handle("browser:command", async (event, action, p) => {
+    if (
+      !win ||
+      event.sender !== win.webContents ||
+      event.senderFrame !== win.webContents.mainFrame ||
+      event.senderFrame.url !== shellURL
+    )
+      throw new Error("許可されていない操作です。");
+    if (mutation && action !== "state")
+      return { error: "処理中です。完了後にもう一度お試しください。" };
+    if (action !== "state") mutation = true;
+    try {
+      return await command(action, p);
+    } catch (error) {
+      publish();
+      return { error: error.message };
+    } finally {
+      if (action !== "state") mutation = false;
+    }
+  });
+  installMenu();
+  createWindow();
+  app.on("activate", () => {
+    if (!win) createWindow();
+  });
+});
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});

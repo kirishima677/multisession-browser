@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Multisession Browser</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="renderer.js" defer></script>
+  </head>
+  <body>
+    <header class="titlebar">
+      <div class="brand">
+        Multisession <strong>Browser</strong
+        ><span class="badge">TEST WORKSPACE</span>
+      </div>
+      <button id="save-workset" class="subtle">
+        構成を保存 <kbd>⌘⇧S</kbd>
+      </button>
+    </header>
+    <aside class="sidebar">
+      <div class="section-heading">
+        SESSIONS
+        <button
+          id="add-session"
+          title="セッションを追加"
+          aria-label="セッションを追加"
+        >
+          ＋
+        </button>
+      </div>
+      <p class="hint">アカウントごとに、独立した保存領域。</p>
+      <div id="sessions" class="session-list"></div>
+      <div class="section-heading workset-heading">WORKSETS</div>
+      <div id="worksets" class="workset-list"></div>
+      <div class="sidebar-note">
+        <span class="note-mark">↳</span>
+        <p>
+          セッション名はラベルです。<br />ログインするアカウントは<br />サイト側で選択してください。
+        </p>
+      </div>
+    </aside>
+    <nav id="tabs" class="tabs" aria-label="タブ"></nav>
+    <div class="toolbar">
+      <button id="back" class="icon" title="戻る" aria-label="戻る">←</button>
+      <button id="forward" class="icon" title="進む" aria-label="進む">
+        →
+      </button>
+      <button
+        id="reload"
+        class="icon"
+        title="再読み込み ⌘R"
+        aria-label="再読み込み"
+      >
+        ↻
+      </button>
+      <form id="address-form">
+        <span id="address-dot" class="dot"></span
+        ><input
+          id="address"
+          aria-label="URL"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="URLを入力してください（⌘L）"
+        />
+      </form>
+      <button id="open-as" title="このURLを別のセッションで開く">
+        別セッション
+      </button>
+      <button id="devtools" class="devtools" title="DevToolsを開く ⌘⌥I">
+        &lt;/&gt; DevTools
+      </button>
+    </div>
+    <main id="content">
+      <div class="welcome" id="welcome">
+        <div class="eyebrow">ONE WINDOW. MULTIPLE PERSPECTIVES.</div>
+        <h1>それぞれのユーザーで、<br />同じ体験を確かめる。</h1>
+        <p>
+          タブにセッションを割り当てて、複数アカウントを同時に操作。<br />Cookieやストレージが、ほかのセッションと混ざることはありません。
+        </p>
+        <div class="welcome-cards">
+          <div>
+            <span>01 / ISOLATE</span>
+            <h3>セッションを選ぶ</h3>
+            <p>左側のセッションをクリックすると<br />新しいタブが開きます。</p>
+          </div>
+          <div>
+            <span>02 / NAVIGATE</span>
+            <h3>テストするサイトへ</h3>
+            <p>URLを入力してログイン。<br />同じセッションのタブ間では共有。</p>
+          </div>
+          <div>
+            <span>03 / INSPECT</span>
+            <h3>通信まで確認する</h3>
+            <p>タブごとのDevToolsで<br />API・Cookie・ログを確認。</p>
+          </div>
+        </div>
+        <button id="focus-address" class="primary">
+          URLを入力して始める <kbd>⌘L</kbd>
+        </button>
+        <p class="welcome-foot">
+          保存セッションは次回も利用可能。一時セッションは終了時にリセット。
+        </p>
+      </div>
+    </main>
+    <footer>
+      <span id="status"></span><span id="error" role="status"></span
+      ><span class="footer-shortcuts"
+        >新しいタブ ⌘T <span>·</span> DevTools ⌘⌥I</span
+      >
+    </footer>
+    <dialog id="modal">
+      <form id="modal-form">
+        <div class="modal-heading">
+          <h2 id="modal-title"></h2>
+          <button type="button" id="modal-close" aria-label="閉じる">×</button>
+        </div>
+        <div id="modal-body"></div>
+        <p id="modal-error" role="alert"></p>
+        <div class="modal-actions">
+          <button type="button" id="modal-cancel">キャンセル</button
+          ><button id="modal-submit" class="primary" type="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
