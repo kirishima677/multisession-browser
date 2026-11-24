@@ -43,7 +43,7 @@
         </p>
       </div>
     </aside>
-    <nav id="tabs" class="tabs" aria-label="タブ"></nav>
+    <nav id="tabs" class="tabs" role="tablist" aria-label="タブ"></nav>
     <div class="toolbar">
       <button id="back" class="icon" title="戻る" aria-label="戻る">←</button>
       <button id="forward" class="icon" title="進む" aria-label="進む">
@@ -70,6 +70,13 @@
       <button id="open-as" title="このURLを別のセッションで開く">
         別セッション
       </button>
+      <button
+        id="toggle-split"
+        aria-label="左右分割"
+        title="別のタブと左右に並べる"
+      >
+        ◫ 分割
+      </button>
       <button id="devtools" class="devtools" title="DevToolsを開く ⌘⌥I">
         &lt;/&gt; DevTools
       </button>
@@ -82,7 +89,9 @@
         ×
       </button>
     </div>
+    <div id="pane-bar" class="pane-bar" hidden></div>
     <main id="content">
+      <div id="split-placeholders" class="split-placeholders" hidden></div>
       <div class="welcome" id="welcome">
         <div class="eyebrow">ONE WINDOW. MULTIPLE PERSPECTIVES.</div>
         <h1>それぞれのユーザーで、<br />同じ体験を確かめる。</h1>
@@ -114,6 +123,15 @@
         </p>
       </div>
     </main>
+    <div id="tab-drop-overlay" class="tab-drop-overlay" hidden>
+      <div data-drop-side="left">
+        <strong>左に表示</strong><span>タブをここにドロップして2分割</span>
+      </div>
+      <div data-drop-side="right">
+        <strong>右に表示</strong><span>タブをここにドロップして2分割</span>
+      </div>
+    </div>
+    <div id="tab-drag-ghost" class="tab-drag-ghost" hidden></div>
     <footer>
       <span id="status"></span><span id="error" role="status"></span
       ><span class="footer-shortcuts"

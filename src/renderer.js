@@ -5,6 +5,12 @@ let modalSubmit;
 let selectedColor;
 let modalClosing = false;
 let uiError = "";
+let tabDrag = null;
+let suppressTabClick = false;
+const tabNodes = new Map();
+const paneNodes = new Map();
+let addTabButton;
+let addressTabId;
 function el(tag, cls, text) {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
@@ -43,7 +49,105 @@ async function invoke(action, payload = {}) {
     return null;
   }
 }
+function makeTabNode(id) {
+  const tab = el("div", "tab");
+  tab.setAttribute("role", "tab");
+  tab.tabIndex = 0;
+  tab.dataset.tabId = id;
+  tab.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest("button") || tabDrag) return;
+    tabDrag = {
+      id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+  });
+  const select = () => invoke("select-tab", { id });
+  tab.addEventListener("click", () => {
+    if (!suppressTabClick) select();
+  });
+  tab.addEventListener("keydown", (event) => {
+    if (event.target !== tab) return;
+    if (
+      event.altKey &&
+      event.shiftKey &&
+      ["ArrowLeft", "ArrowRight"].includes(event.key)
+    ) {
+      event.preventDefault();
+      const ids = state.tabs.map((t) => t.id),
+        at = ids.indexOf(id);
+      const beforeId =
+        event.key === "ArrowLeft"
+          ? ids[Math.max(0, at - 1)]
+          : ids[at + 2] || null;
+      invoke("reorder-tab", { id, beforeId }).then(() =>
+        tabNodes.get(id)?.focus(),
+      );
+    } else if (["Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      select();
+    }
+  });
+  tab.append(
+    dot("#6478ff"),
+    el("span", "tab-title"),
+    el("span", "tab-pane"),
+    button("×", "tab-close", (event) => {
+      event.stopPropagation();
+      invoke("close-tab", { id });
+    }),
+  );
+  return tab;
+}
+function renderTabs() {
+  const nav = $("#tabs");
+  const ids = new Set(state.tabs.map((t) => t.id));
+  for (const [id, node] of tabNodes)
+    if (!ids.has(id)) {
+      node.remove();
+      tabNodes.delete(id);
+    }
+  state.tabs.forEach((t, index) => {
+    let node = tabNodes.get(t.id);
+    if (!node) {
+      node = makeTabNode(t.id);
+      tabNodes.set(t.id, node);
+    }
+    const profile = state.sessions.find((s) => s.id === t.sessionId);
+    const selected = t.id === state.activeId;
+    const side =
+      state.split?.left === t.id
+        ? "LEFT"
+        : state.split?.right === t.id
+          ? "RIGHT"
+          : "";
+    node.classList.toggle("active", selected);
+    node.classList.toggle("in-split", Boolean(side));
+    node.setAttribute("aria-selected", String(selected));
+    node.title = `${profile.name} — ${t.title}\nドラッグで並び替え／画面の左右にドロップして分割`;
+    const indicator = node.querySelector(".dot");
+    indicator.style.setProperty("--color", profile.color);
+    indicator.classList.toggle("loading", t.loading);
+    node.querySelector(".tab-title").textContent =
+      `${profile.name} / ${t.title}`;
+    const badge = node.querySelector(".tab-pane");
+    badge.textContent = side;
+    badge.hidden = !side;
+    const close = node.querySelector(".tab-close");
+    close.title = `${profile.name}のタブを閉じる`;
+    close.setAttribute("aria-label", close.title);
+    // Keep the same DOM nodes through title/focus updates and pointer sequences.
+    if (nav.children[index] !== node)
+      nav.insertBefore(node, nav.children[index] || null);
+  });
+  if (!addTabButton)
+    addTabButton = button("＋", "new-tab", () => newTabModal(), "新しいタブ");
+  if (nav.lastElementChild !== addTabButton) nav.append(addTabButton);
+}
 function render(next) {
+  if (state && next.revision < state.revision) return;
   state = next;
   const active = activeTab();
   const profile = state.sessions.find((s) => s.id === active?.sessionId);
@@ -80,41 +184,8 @@ function render(next) {
       return row;
     }),
   );
-  $("#tabs").replaceChildren(
-    ...state.tabs.map((t) => {
-      const s = state.sessions.find((s) => s.id === t.sessionId);
-      const tab = el("div", `tab${t.id === active?.id ? " active" : ""}`);
-      tab.setAttribute("role", "tab");
-      tab.setAttribute("aria-selected", String(t.id === active?.id));
-      tab.tabIndex = 0;
-      tab.title = `${s.name} — ${t.title}`;
-      const select = () => invoke("select-tab", { id: t.id });
-      tab.addEventListener("click", select);
-      tab.addEventListener("keydown", (event) => {
-        if (event.target === tab && ["Enter", " "].includes(event.key)) {
-          event.preventDefault();
-          select();
-        }
-      });
-      const indicator = dot(s.color);
-      if (t.loading) indicator.classList.add("loading");
-      tab.append(
-        indicator,
-        el("span", "tab-title", `${s.name} / ${t.title}`),
-        button(
-          "×",
-          "tab-close",
-          (event) => {
-            event.stopPropagation();
-            invoke("close-tab", { id: t.id });
-          },
-          `${s.name}のタブを閉じる`,
-        ),
-      );
-      return tab;
-    }),
-    button("＋", "new-tab", () => newTabModal(), "新しいタブ"),
-  );
+  renderTabs();
+  renderSplit();
   const worksets = state.worksets.map((w) => {
     const row = el("div", "workset-item");
     const open = button(
@@ -146,9 +217,13 @@ function render(next) {
           ),
         ]),
   );
-  if (document.activeElement !== $("#address"))
+  if (
+    document.activeElement !== $("#address") ||
+    addressTabId !== state.activeId
+  )
     $("#address").value =
       active?.url === "about:blank" ? "" : active?.url || "";
+  addressTabId = state.activeId;
   $("#address-dot").style.setProperty("--color", profile?.color || "#6478ff");
   $("#back").disabled = !active?.canGoBack;
   $("#forward").disabled = !active?.canGoForward;
@@ -157,7 +232,9 @@ function render(next) {
     "has-auth-notice",
     Boolean(active?.authNotice),
   );
-  $("#welcome").hidden = Boolean(active && active.url !== "about:blank");
+  $("#welcome").hidden = Boolean(
+    state.split || (active && active.url !== "about:blank"),
+  );
   $("#status").textContent = profile
     ? `${profile.name}  /  ${profile.persistent ? "保存" : "一時"}${active?.loading ? "  · 読み込み中…" : ""}`
     : "";
@@ -376,6 +453,7 @@ $("#modal-form").addEventListener("submit", async (event) => {
 });
 api.subscribe(render);
 api.onShortcut((name) => {
+  if (tabDrag?.active) return;
   if ($("#modal").open) return;
   if (name === "address") focusAddress();
   if (name === "new-tab") newTabModal();
@@ -386,3 +464,194 @@ invoke("state");
 $("#dismiss-auth-notice").addEventListener("click", () =>
   invoke("dismiss-auth-notice"),
 );
+
+function renderSplit() {
+  const split = state.split;
+  document.body.classList.toggle("is-split", Boolean(split));
+  $("#pane-bar").hidden = !split;
+  $("#split-placeholders").hidden = !split;
+  $("#toggle-split").textContent = split ? "◫ 解除" : "◫ 分割";
+  $("#toggle-split").setAttribute(
+    "aria-label",
+    split ? "分割を解除" : "左右分割",
+  );
+  $("#toggle-split").disabled = !split && state.tabs.length < 2;
+  $("#toggle-split").title = split
+    ? "選択中のタブを全体表示に戻す"
+    : state.tabs.length < 2
+      ? "分割表示には2つ以上のタブが必要です"
+      : "別のタブと左右に並べる（タブのドラッグでも操作できます）";
+  if (!split) return;
+  for (const side of ["left", "right"]) {
+    let nodes = paneNodes.get(side);
+    if (!nodes) {
+      const select = () => {
+        const id = state.split?.[side];
+        if (id) invoke("select-tab", { id });
+      };
+      const heading = button(
+        "",
+        "pane-heading",
+        select,
+        `${side === "left" ? "左" : "右"}ペインを選択`,
+      );
+      heading.append(dot("#6478ff"), el("span", "pane-label"));
+      const placeholder = button("", "pane-placeholder", select);
+      placeholder.append(
+        el("strong"),
+        el("span", "", "このペインを選び、URLまたは検索キーワードを入力"),
+      );
+      nodes = { heading, placeholder };
+      paneNodes.set(side, nodes);
+      $("#pane-bar").append(heading);
+      $("#split-placeholders").append(placeholder);
+    }
+    const tab = state.tabs.find((t) => t.id === split[side]);
+    const profile = state.sessions.find((s) => s.id === tab.sessionId);
+    const selected = tab.id === state.activeId;
+    nodes.heading.classList.toggle("selected", selected);
+    nodes.heading.setAttribute("aria-pressed", String(selected));
+    nodes.heading.dataset.paneTabId = tab.id;
+    nodes.heading
+      .querySelector(".dot")
+      .style.setProperty("--color", profile.color);
+    nodes.heading.querySelector(".pane-label").textContent =
+      `${side === "left" ? "LEFT" : "RIGHT"} / ${profile.name} — ${tab.title}`;
+    nodes.placeholder.querySelector("strong").textContent = profile.name;
+    nodes.placeholder.classList.toggle("empty", tab.url === "about:blank");
+  }
+}
+$("#toggle-split").addEventListener("click", () => {
+  if (state.split) invoke("end-split");
+  else {
+    const other = state.tabs.find((t) => t.id !== state.activeId);
+    if (other) invoke("split-tab", { id: other.id, side: "right" });
+  }
+});
+function dragTarget(x, y) {
+  const rect = $("#tabs").getBoundingClientRect();
+  if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+    const others = [...$("#tabs").querySelectorAll("[data-tab-id]")].filter(
+      (node) => node.dataset.tabId !== tabDrag.id,
+    );
+    const before = others.find(
+      (node) =>
+        x <
+        node.getBoundingClientRect().left +
+          node.getBoundingClientRect().width / 2,
+    );
+    return { kind: "reorder", beforeId: before?.dataset.tabId || null };
+  }
+  const area = $("#content").getBoundingClientRect();
+  if (
+    state.tabs.length > 1 &&
+    x >= area.left &&
+    x <= area.right &&
+    y >= area.top &&
+    y <= area.bottom
+  )
+    return {
+      kind: "split",
+      side: x < (area.left + area.right) / 2 ? "left" : "right",
+    };
+  return null;
+}
+function updateDrag(event) {
+  const drag = tabDrag;
+  if (!drag || drag.finishing || event.pointerId !== drag.pointerId) return;
+  if (!drag.active) {
+    if (
+      Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6
+    )
+      return;
+    drag.active = true;
+    suppressTabClick = true;
+    $("#tabs").setPointerCapture(event.pointerId);
+    document.body.classList.add("dragging-tabs");
+    $("#tab-drop-overlay").hidden = state.tabs.length < 2;
+    const tab = state.tabs.find((t) => t.id === drag.id);
+    const profile = state.sessions.find((s) => s.id === tab.sessionId);
+    $("#tab-drag-ghost").textContent = `${profile.name} / ${tab.title}`;
+    $("#tab-drag-ghost").hidden = false;
+    drag.ready = invoke("tab-drag", { active: true, id: drag.id });
+  }
+  event.preventDefault();
+  drag.target = dragTarget(event.clientX, event.clientY);
+  $("#tab-drag-ghost").style.left =
+    `${Math.min(event.clientX + 12, window.innerWidth - 250)}px`;
+  $("#tab-drag-ghost").style.top = `${Math.max(4, event.clientY - 44)}px`;
+  for (const node of $("#tabs").querySelectorAll("[data-tab-id]")) {
+    node.classList.toggle("drag-source", node.dataset.tabId === drag.id);
+    node.classList.toggle(
+      "drop-before",
+      drag.target?.kind === "reorder" &&
+        node.dataset.tabId === drag.target.beforeId,
+    );
+    node.classList.toggle(
+      "drop-after",
+      drag.target?.kind === "reorder" &&
+        !drag.target.beforeId &&
+        node === $("#tabs").querySelector("[data-tab-id]:last-of-type"),
+    );
+  }
+  for (const zone of $("#tab-drop-overlay").children)
+    zone.classList.toggle(
+      "drop-active",
+      drag.target?.kind === "split" &&
+        zone.dataset.dropSide === drag.target.side,
+    );
+  // Scroll overflowing tab strips while holding a tab near either edge.
+  const rect = $("#tabs").getBoundingClientRect();
+  if (event.clientY < rect.bottom + 10) {
+    if (event.clientX > rect.right - 35) $("#tabs").scrollLeft += 16;
+    if (event.clientX < rect.left + 35) $("#tabs").scrollLeft -= 16;
+  }
+}
+async function finishDrag(cancel = false) {
+  const drag = tabDrag;
+  if (!drag || drag.finishing) return;
+  drag.finishing = true;
+  if (!drag.active) {
+    tabDrag = null;
+    return;
+  }
+
+  try {
+    await drag.ready;
+    if (!cancel && drag.target?.kind === "reorder")
+      await invoke("reorder-tab", {
+        id: drag.id,
+        beforeId: drag.target.beforeId,
+      });
+    if (!cancel && drag.target?.kind === "split")
+      await invoke("split-tab", { id: drag.id, side: drag.target.side });
+  } finally {
+    await invoke("tab-drag", { active: false });
+    if ($("#tabs").hasPointerCapture(drag.pointerId))
+      $("#tabs").releasePointerCapture(drag.pointerId);
+    tabDrag = null;
+    for (const node of tabNodes.values())
+      node.classList.remove("drag-source", "drop-before", "drop-after");
+    document.body.classList.remove("dragging-tabs");
+    $("#tab-drop-overlay").hidden = true;
+    $("#tab-drag-ghost").hidden = true;
+    render(state);
+  }
+}
+window.addEventListener(
+  "pointerdown",
+  () => {
+    suppressTabClick = false;
+  },
+  { capture: true },
+);
+window.addEventListener("pointermove", updateDrag, { passive: false });
+window.addEventListener("pointerup", () => finishDrag());
+window.addEventListener("pointercancel", () => finishDrag(true));
+window.addEventListener("blur", () => finishDrag(true));
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && tabDrag?.active) {
+    event.preventDefault();
+    finishDrag(true);
+  }
+});

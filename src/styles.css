@@ -255,9 +255,10 @@ kbd {
   height: 38px;
 }
 .tab.active {
-  background: #fff;
-  color: #29364e;
-  border-color: var(--line);
+  background: #eaf0ff;
+  color: #293f79;
+  border-color: #c3cef0;
+  box-shadow: inset 0 3px #6478ff;
 }
 .tab-title {
   font-size: 11px;
@@ -589,4 +590,173 @@ dialog .help {
 }
 .has-auth-notice #content {
   top: 204px;
+}
+
+.tab {
+  user-select: none;
+  touch-action: none;
+}
+.tab.in-split:not(.active) {
+  background: #f6f7fb;
+  color: #7c869a;
+}
+.tab-pane {
+  flex: none;
+  font-size: 8px;
+  letter-spacing: 0.4px;
+  padding: 3px 4px;
+  border: 1px solid #dce1ec;
+  border-radius: 4px;
+  color: #8b94a7;
+  background: #f9fafe;
+}
+.tab-pane[hidden] {
+  display: none;
+}
+.tab.active .tab-pane {
+  background: #dce6ff;
+  color: #455b9b;
+  border-color: #c3cef0;
+}
+
+.tab.drag-source {
+  opacity: 0.35;
+}
+.tab.drop-before {
+  box-shadow: -3px 0 0 #6478ff;
+}
+.tab.drop-after {
+  box-shadow: 3px 0 0 #6478ff;
+}
+.pane-bar {
+  position: absolute;
+  left: 236px;
+  right: 0;
+  top: 152px;
+  height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  background: #e7ebf4;
+  z-index: 2;
+}
+.pane-bar[hidden],
+.split-placeholders[hidden],
+.tab-drop-overlay[hidden],
+.tab-drag-ghost[hidden] {
+  display: none;
+}
+.has-auth-notice .pane-bar {
+  top: 204px;
+}
+.pane-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 0;
+  background: #f5f6fb;
+  color: #8a96ac;
+  font-size: 10px;
+  text-align: left;
+}
+.pane-heading.selected {
+  color: #364d88;
+  background: #eaf0ff;
+  box-shadow: inset 0 -2px #6478ff;
+}
+.pane-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.split-placeholders {
+  position: absolute;
+  inset: 34px 0 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  background: #e7ebf4;
+}
+.pane-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  white-space: normal;
+  gap: 16px;
+  background: #fff;
+  border: 0;
+  border-radius: 0;
+  color: #8b96ad;
+  cursor: default;
+}
+.pane-placeholder strong {
+  font-size: 19px;
+  color: #4d5e80;
+}
+.pane-placeholder span {
+  font-size: 11px;
+  line-height: 1.8;
+  padding: 0 20px;
+}
+.tab-drop-overlay {
+  position: absolute;
+  left: 236px;
+  top: 152px;
+  right: 0;
+  bottom: 28px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 24px;
+  background: #f5f7fc;
+  z-index: 10;
+  pointer-events: none;
+}
+.tab-drop-overlay > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #8793ae;
+  border: 2px dashed #cdd5e9;
+  border-radius: 14px;
+  background: #ffffffaa;
+}
+.tab-drop-overlay strong {
+  font-size: 21px;
+  font-weight: 600;
+}
+.tab-drop-overlay span {
+  font-size: 11px;
+}
+.tab-drop-overlay .drop-active {
+  border-color: #6478ff;
+  background: #e9edff;
+  color: #5367c8;
+}
+.tab-drag-ghost {
+  position: fixed;
+  z-index: 20;
+  width: 235px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border: 1px solid #b5c0e6;
+  border-radius: 9px;
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 8px 25px #1e315b25;
+  pointer-events: none;
+  font-size: 11px;
+  color: #405582;
+}
+.dragging-tabs,
+.dragging-tabs * {
+  cursor: grabbing !important;
+  user-select: none;
 }

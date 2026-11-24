@@ -12,6 +12,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
 const { contextMenuTemplate } = require("./context-menu");
+const { reorderIds, splitForDrop, selectInSplit } = require("./tab-layout");
 const {
   COLORS,
   label,
@@ -29,6 +30,7 @@ app.setName("Multisession Browser");
 const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
 const runId = randomUUID();
+let stateRevision = 0;
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
 const sitePreload = path.join(__dirname, "site-preload.js");
 const shellURL = pathToFileURL(path.join(__dirname, "index.html")).href;
@@ -37,7 +39,9 @@ let win,
   store,
   activeId,
   overlay = false,
-  mutation = false;
+  mutation = false,
+  split = null,
+  draggingTab = false;
 const tabs = new Map();
 const configured = new Set();
 const popups = new Map();
@@ -62,10 +66,13 @@ function current() {
 }
 function state() {
   return {
+    revision: ++stateRevision,
     sessions: config.sessions,
     worksets: config.worksets,
     colors: COLORS,
     activeId,
+    split,
+    draggingTab,
     tabs: [...tabs.values()].map((t) => ({
       id: t.id,
       sessionId: t.sessionId,
@@ -82,22 +89,32 @@ function state() {
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send("browser:state", state());
 }
+function activateTab(id) {
+  split = selectInSplit(split, activeId, id);
+  activeId = id;
+}
 function layout() {
   if (!win || win.isDestroyed()) return;
   const [width, height] = win.getContentSize();
-  const top = chrome.top + (current()?.authNotice ? 52 : 0);
+  const top = chrome.top + (current()?.authNotice ? 52 : 0) + (split ? 34 : 0);
+  const available = Math.max(0, width - chrome.sidebar);
+  const leftWidth = Math.floor((available - 8) / 2);
   for (const t of tabs.values()) {
+    const isRight = split?.right === t.id;
     t.view.setBounds({
-      x: chrome.sidebar,
+      x: chrome.sidebar + (isRight ? leftWidth + 8 : 0),
       y: top,
-      width: Math.max(0, width - chrome.sidebar),
+      width: split
+        ? Math.max(0, isRight ? available - leftWidth - 8 : leftWidth)
+        : available,
       height: Math.max(0, height - top - chrome.bottom),
     });
     const visible =
-      t.id === activeId &&
+      (split ? Object.values(split).includes(t.id) : t.id === activeId) &&
       !overlay &&
+      !draggingTab &&
       t.view.webContents.getURL() !== "about:blank";
-    t.view.setVisible(visible);
+    if (t.view.getVisible() !== visible) t.view.setVisible(visible);
   }
 }
 function configuredSession(profile) {
@@ -220,6 +237,19 @@ function createTab(sessionId, value = "about:blank") {
   win.contentView.addChildView(view);
   view.setBackgroundColor("#ffffff");
   guardContents(view.webContents, profile);
+  view.webContents.on("focus", () => {
+    if (
+      split &&
+      Object.values(split).includes(t.id) &&
+      activeId !== t.id &&
+      !overlay &&
+      !draggingTab
+    ) {
+      activeId = t.id;
+      layout();
+      publish();
+    }
+  });
   const update = () => {
     layout();
     publish();
@@ -260,7 +290,7 @@ function createTab(sessionId, value = "about:blank") {
     t.error = "ページが停止しました。再読み込みしてください。";
     update();
   });
-  activeId = t.id;
+  activateTab(t.id);
   view.webContents.loadURL(url).catch(() => {});
   layout();
   publish();
@@ -272,6 +302,10 @@ function closeTab(id, ensure = true) {
   // Close dependent authentication windows before destroying their opener.
   for (const { window: child, openerId } of [...popups.values()]) {
     if (openerId === t.view.webContents.id) child.destroy();
+  }
+  if (split && Object.values(split).includes(id)) {
+    activeId = split.left === id ? split.right : split.left;
+    split = null;
   }
   win.contentView.removeChildView(t.view);
   tabs.delete(id);
@@ -381,6 +415,7 @@ async function command(action, p = {}) {
       break;
     case "overlay":
       overlay = Boolean(p.open);
+      if (overlay) draggingTab = false;
       layout();
       break;
     case "create-tab":
@@ -391,7 +426,33 @@ async function command(action, p = {}) {
       break;
     case "select-tab":
       if (!tabs.has(p.id)) throw new Error("タブが見つかりません。");
+      activateTab(p.id);
+      win.webContents.focus();
+      layout();
+      if (!overlay && !draggingTab && current().view.getVisible())
+        current().view.webContents.focus();
+      break;
+    case "reorder-tab": {
+      const ids = reorderIds([...tabs.keys()], p.id, p.beforeId ?? null);
+      const entries = ids.map((id) => [id, tabs.get(id)]);
+      tabs.clear();
+      for (const [id, tab] of entries) tabs.set(id, tab);
+      break;
+    }
+    case "split-tab":
+      split = splitForDrop([...tabs.keys()], activeId, split, p.id, p.side);
       activeId = p.id;
+      layout();
+      break;
+    case "end-split":
+      split = null;
+      layout();
+      break;
+    case "tab-drag":
+      if (p.active && (!tabs.has(p.id) || overlay))
+        throw new Error("タブをドラッグできません。");
+      draggingTab = Boolean(p.active);
+      if (draggingTab) win.webContents.focus();
       layout();
       break;
     case "close-tab":
@@ -646,6 +707,8 @@ function createWindow() {
         t.view.webContents.close({ waitForBeforeUnload: false });
     tabs.clear();
     activeId = undefined;
+    split = null;
+    draggingTab = false;
     overlay = false;
     win = null;
   });

@@ -11,6 +11,7 @@ BrowserWindow（管理UI / ローカルHTML）
 
 - `src/main.js`：ウィンドウ・タブ・Session・IPC・ネイティブメニュー。
 - `src/preload.js`：管理UIだけに公開するIPCブリッジ。
+- `src/tab-layout.js`：タブ順序・分割配置・選択時のペイン置き換え。
 - `src/context-menu.js`：クリック元のWebContentsに対する右クリックメニュー。
 - `src/site-preload.js`：非対応のWebAuthn要求を速やかに終了するサイト用preload。管理APIは公開しない。
 - `src/model.js`：URLと設定の検証、partition識別子、原子的な設定保存。
@@ -20,9 +21,23 @@ BrowserWindow（管理UI / ローカルHTML）
 
 ## 画面レイアウト
 
-左236pxはセッション一覧、上152pxはタイトル・タブ・URLバー、下28pxは状態表示。残りを選択中のWebContentsViewに割り当てる。非選択タブはビューを非表示にし、ページは存続させる。ダイアログ表示中はWebContentsViewをすべて隠し、ネイティブビューがHTMLダイアログを覆わないようにする。
+左236pxはセッション一覧、上152pxはタイトル・タブ・URLバー、下28pxは状態表示。残りを通常表示では選択中のWebContentsViewに、分割表示では指定した2つのWebContentsViewに割り当てる。表示対象外のタブはビューを非表示にし、ページは存続させる。ダイアログ表示中はWebContentsViewをすべて隠し、ネイティブビューがHTMLダイアログを覆わないようにする。
 
 HTMLとメイン側のレイアウト寸法を変更する場合、両方を更新すること。
+
+## タブのドラッグと分割
+
+タブ順序はMapの挿入順で管理し、並び替え時は同じタブオブジェクトを再配置する。作業セット保存もこの順を使う。分割状態は `{left: tabId, right: tabId}` としてウィンドウ単位で保持し、永続化しない。
+
+分割表示ではWebContentsViewを2つ同時表示し、上34pxをペイン見出し、中央8pxを間隔とする。残りの幅を整数で等分する。表示中のWebContentsのfocusイベントを管理画面に反映し、URL欄等の対象を更新する。
+
+HTMLのドラッグ領域がネイティブのWebContentsViewに隠されるため、Pointer Eventsでタブ移動を検出し、ドラッグ中だけサイトのビューを非表示にする。HTML側はpointer captureで追跡し、ドロップ先とタブのゴーストを表示する。タブとペイン見出しはIDごとにDOMを再利用し、クリック・キーボードフォーカス・pointer captureを維持したまま、移動中も選択状態を更新する。完了・キャンセル後は同じWebContentsを再表示する。
+
+選択状態はメイン側のactiveIdを基準とする。状態スナップショットにはプロセス内で単調増加するrevisionを付け、rendererは現在より古いrevisionを無視する。同じ状態をドラッグ後に再描画することは許可する。タブ選択時はネイティブWebContentsのフォーカスも合わせ、可視性が変わらないビューにはsetVisibleを繰り返さない。
+
+ドラッグ完了に伴うクリックだけを抑制し、次のpointerdownで抑制を解除する。時間指定で後続のユーザークリックを捨てない。ドラッグ用の一時クラスは終了・取消時に明示的に除く。
+
+IPCは管理UI専用の既存経路を使用し、タブIDとドロップ先をメイン側で検証する。
 
 ## 認証案内
 
