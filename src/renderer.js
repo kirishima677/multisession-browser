@@ -225,6 +225,9 @@ function render(next) {
       active?.url === "about:blank" ? "" : active?.url || "";
   addressTabId = state.activeId;
   $("#address-dot").style.setProperty("--color", profile?.color || "#6478ff");
+  $("#address").readOnly = active?.kind === "api";
+  $("#address").title =
+    active?.kind === "api" ? "APIタブ内のURL欄で編集します（⌘L）" : "";
   $("#back").disabled = !active?.canGoBack;
   $("#forward").disabled = !active?.canGoForward;
   $("#auth-notice").hidden = !active?.authNotice;
@@ -375,25 +378,62 @@ function sessionModal(profile) {
       }),
   );
 }
-function newTabModal(copyURL = false) {
-  let select;
+function newTabModal(copyURL = false, initialKind = "web") {
+  let select, kindSelect;
+  const source = activeTab();
   const url = copyURL ? activeTab()?.url : "about:blank";
   showModal(
-    copyURL ? "別セッションで開く" : "新しいタブ",
+    copyURL
+      ? source?.kind === "api"
+        ? "APIを別セッションに複製"
+        : "別セッションで開く"
+      : "新しいタブ",
     "タブを開く",
     (body) => {
       select = sessionSelect(body, activeTab()?.sessionId);
+      if (!copyURL) {
+        const caption = el("label", "", "タブの種類");
+        caption.htmlFor = "tab-kind";
+        kindSelect = el("select");
+        kindSelect.id = "tab-kind";
+        for (const [value, text] of [
+          ["web", "Webページ"],
+          ["api", "APIクライアント"],
+        ]) {
+          const option = el("option", "", text);
+          option.value = value;
+          kindSelect.append(option);
+        }
+        kindSelect.value = initialKind;
+        body.append(caption, kindSelect);
+      }
       body.append(
         el(
           "p",
           "help",
           copyURL
-            ? "選択したセッションで現在のURLを開きます。入力内容は引き継ぎません。"
+            ? source?.kind === "api"
+              ? "選択したセッションへ定義を複製します。Bearerと認証系ヘッダーは引き継ぎません。"
+              : "選択したセッションで現在のURLを開きます。入力内容は引き継ぎません。"
             : "同じセッションのタブはログイン状態を共有します。",
         ),
       );
     },
-    () => invoke("create-tab", { sessionId: select.value, url }),
+    () =>
+      copyURL && source?.kind === "api"
+        ? invoke("duplicate-api-tab", {
+            id: source.id,
+            sessionId: select.value,
+          })
+        : invoke(
+            !copyURL && kindSelect.value === "api"
+              ? "create-api-tab"
+              : "create-tab",
+            {
+              sessionId: select.value,
+              ...(!copyURL && kindSelect.value === "api" ? {} : { url }),
+            },
+          ),
   );
 }
 function saveWorksetModal() {
@@ -407,7 +447,7 @@ function saveWorksetModal() {
         el(
           "p",
           "help",
-          `${state.tabs.length}個のタブのURL・順番・セッションを保存します。入力途中の内容や通信履歴は保存しません。URLに含まれる機密情報に注意してください。`,
+          `${state.tabs.length}個のタブのURL・順番・セッションを保存します。APIタブはBearerと認証系ヘッダーを除く定義も保存します。URLや本文の機密値は保存対象です。Webページの入力内容と通信履歴は保存しません。`,
         ),
       );
     },
@@ -430,6 +470,7 @@ $("#back").addEventListener("click", () => invoke("back"));
 $("#forward").addEventListener("click", () => invoke("forward"));
 $("#reload").addEventListener("click", () => invoke("reload"));
 $("#devtools").addEventListener("click", () => invoke("devtools"));
+$("#new-api").addEventListener("click", () => newTabModal(false, "api"));
 $("#open-as").addEventListener("click", () => newTabModal(true));
 $("#add-session").addEventListener("click", () => sessionModal());
 $("#save-workset").addEventListener("click", saveWorksetModal);
@@ -457,6 +498,7 @@ api.onShortcut((name) => {
   if ($("#modal").open) return;
   if (name === "address") focusAddress();
   if (name === "new-tab") newTabModal();
+  if (name === "new-api-tab") newTabModal(false, "api");
   if (name === "save-workset") saveWorksetModal();
 });
 invoke("state");

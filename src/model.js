@@ -1,6 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { draft: apiDraft, storedDraft } = require("./api-request");
 
 const COLORS = [
   "#6478ff",
@@ -91,6 +92,7 @@ function defaults() {
       makeSession(name, true, COLORS[i]),
     ),
     worksets: [],
+    apiRequests: [],
   };
 }
 function validateConfig(data) {
@@ -123,8 +125,33 @@ function validateConfig(data) {
     for (const t of w.tabs) {
       if (!ids.has(t.sessionId))
         throw new Error("作業セットのセッションが見つかりません。");
-      normalizeURL(t.url);
+      if (t.kind && !["web", "api"].includes(t.kind))
+        throw new Error("タブの種類が不正です。");
+      if (t.kind === "api") {
+        apiDraft(t.request);
+        if (
+          t.request.bearer ||
+          storedDraft(t.request).headers !== t.request.headers
+        )
+          throw new Error("APIの保存設定に認証情報は含められません。");
+      } else normalizeURL(t.url);
     }
+  }
+  if (data.apiRequests === undefined) data.apiRequests = [];
+  if (!Array.isArray(data.apiRequests))
+    throw new Error("APIリクエストの保存形式が不正です。");
+  const requestIds = new Set();
+  for (const r of data.apiRequests) {
+    if (!idOK(r.id) || requestIds.has(r.id) || !ids.has(r.sessionId))
+      throw new Error("APIリクエストの保存設定が不正です。");
+    label(r.name);
+    apiDraft(r.request);
+    if (
+      r.request.bearer ||
+      storedDraft(r.request).headers !== r.request.headers
+    )
+      throw new Error("APIの保存設定に認証情報は含められません。");
+    requestIds.add(r.id);
   }
   return data;
 }

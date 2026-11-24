@@ -14,6 +14,7 @@ const { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
 const { contextMenuTemplate } = require("./context-menu");
 const { createPageActions } = require("./page-actions");
+const { createApiTabs } = require("./api-tabs");
 const { reorderIds, splitForDrop, selectInSplit } = require("./tab-layout");
 const {
   COLORS,
@@ -34,6 +35,7 @@ if (!primaryInstance) app.quit();
 const runId = randomUUID();
 let stateRevision = 0;
 let pageActions;
+let apiTabs;
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
 const appIconPath = path.join(__dirname, "..", "assets", "icon.png");
 const sitePreload = path.join(__dirname, "site-preload.js");
@@ -80,13 +82,20 @@ function state() {
     tabs: [...tabs.values()].map((t) => ({
       id: t.id,
       sessionId: t.sessionId,
+      kind: t.kind || "web",
       title: t.title || "新しいタブ",
-      url: t.view.webContents.getURL() || "about:blank",
-      loading: t.view.webContents.isLoading(),
+      url:
+        t.kind === "api"
+          ? t.request.url || "about:blank"
+          : t.view.webContents.getURL() || "about:blank",
+      loading:
+        t.kind === "api" ? Boolean(t.apiJob) : t.view.webContents.isLoading(),
       error: t.error || "",
       authNotice: Boolean(t.authNotice),
-      canGoBack: t.view.webContents.navigationHistory.canGoBack(),
-      canGoForward: t.view.webContents.navigationHistory.canGoForward(),
+      canGoBack:
+        t.kind !== "api" && t.view.webContents.navigationHistory.canGoBack(),
+      canGoForward:
+        t.kind !== "api" && t.view.webContents.navigationHistory.canGoForward(),
     })),
   };
 }
@@ -321,6 +330,7 @@ function closeTab(id, ensure = true) {
   }
   win.contentView.removeChildView(t.view);
   tabs.delete(id);
+  if (t.kind === "api") apiTabs.cancel(t);
   t.view.webContents.close({ waitForBeforeUnload: false });
   if (activeId === id) activeId = [...tabs.keys()].at(-1);
   if (ensure && !tabs.size) createTab(config.sessions[0].id);
@@ -425,10 +435,12 @@ async function resetSession(id, remove) {
   await ses.clearAuthCache();
   if (remove) {
     config.sessions = config.sessions.filter((s) => s.id !== id);
+    config.apiRequests = config.apiRequests.filter((r) => r.sessionId !== id);
     for (const w of config.worksets)
       w.tabs = w.tabs.filter((t) => t.sessionId !== id);
   }
   persist();
+  apiTabs.refresh();
   if (!tabs.size) createTab((remove ? config.sessions[0] : profile).id);
 }
 async function command(action, p = {}) {
@@ -441,6 +453,19 @@ async function command(action, p = {}) {
       if (overlay) draggingTab = false;
       layout();
       break;
+    case "create-api-tab":
+      apiTabs.create(
+        p.sessionId || current()?.sessionId || config.sessions[0].id,
+        p.request,
+      );
+      break;
+    case "duplicate-api-tab": {
+      const source = tabs.get(p.id);
+      if (source?.kind !== "api") throw new Error("APIタブが見つかりません。");
+      const { storedDraft } = require("./api-request");
+      apiTabs.create(p.sessionId, storedDraft(source.request));
+      break;
+    }
     case "create-tab":
       createTab(
         p.sessionId || current()?.sessionId || config.sessions[0].id,
@@ -483,6 +508,8 @@ async function command(action, p = {}) {
       break;
     case "navigate": {
       const t = current();
+      if (t?.kind === "api")
+        throw new Error("APIタブ内のURL欄を編集してください。");
       const url = resolveAddressInput(p.url);
       if (t) {
         t.error = "";
@@ -512,6 +539,7 @@ async function command(action, p = {}) {
       const s = makeSession(p.name, p.persistent, p.color);
       config.sessions.push(s);
       persist();
+      apiTabs.refresh();
       createTab(s.id);
       break;
     }
@@ -522,6 +550,7 @@ async function command(action, p = {}) {
       s.name = name;
       s.color = p.color;
       persist();
+      apiTabs.refresh();
       break;
     }
     case "reset-session":
@@ -535,10 +564,14 @@ async function command(action, p = {}) {
       config.worksets.push({
         id: randomUUID(),
         name,
-        tabs: [...tabs.values()].map((t) => ({
-          sessionId: t.sessionId,
-          url: normalizeURL(t.view.webContents.getURL()),
-        })),
+        tabs: [...tabs.values()].map((t) =>
+          t.kind === "api"
+            ? apiTabs.serialize(t)
+            : {
+                sessionId: t.sessionId,
+                url: normalizeURL(t.view.webContents.getURL()),
+              },
+        ),
       });
       persist();
       break;
@@ -565,7 +598,10 @@ async function command(action, p = {}) {
           tempEpochs.set(id, (tempEpochs.get(id) || 0) + 1);
         }
       }
-      for (const t of w.tabs) createTab(t.sessionId, t.url);
+      for (const t of w.tabs) {
+        if (t.kind === "api") apiTabs.create(t.sessionId, t.request);
+        else createTab(t.sessionId, t.url);
+      }
       activeId = [...tabs.keys()][0];
       layout();
       break;
@@ -592,6 +628,11 @@ function shortcut(name) {
   if (!win || win.isDestroyed()) return;
   win.show();
   win.focus();
+  if (name === "address" && current()?.kind === "api") {
+    current().view.webContents.focus();
+    current().view.webContents.send("api-client:focus-url");
+    return;
+  }
   win.webContents.focus();
   win.webContents.send("browser:shortcut", name);
 }
@@ -660,6 +701,11 @@ function installMenu() {
       {
         label: "ファイル",
         submenu: [
+          {
+            label: "新しいAPIタブ",
+            accelerator: "CmdOrCtrl+Alt+T",
+            click: () => shortcut("new-api-tab"),
+          },
           {
             label: "新しいタブ",
             accelerator: "CmdOrCtrl+T",
@@ -827,6 +873,20 @@ app.whenReady().then(() => {
     }
   });
   pageActions = createPageActions(() => win);
+  apiTabs = createApiTabs({
+    tabs,
+    window: () => win,
+    getConfig: () => config,
+    profileFor,
+    getSession: configuredSession,
+    persist,
+    activate: activateTab,
+    layout,
+    publish,
+    installKeyboard,
+    installContextMenu,
+    securePreferences,
+  });
   installMenu();
   createWindow();
   app.on("activate", () => {

@@ -91,3 +91,20 @@ electron-builderでmacOS向け `.app` / ZIP / DMGを作成する。ローカル�
 - [WebContentsView](https://www.electronjs.org/docs/latest/api/web-contents-view)
 - [WebContents](https://www.electronjs.org/docs/latest/api/web-contents)
 - [Electronのセキュリティ](https://www.electronjs.org/docs/latest/tutorial/security)
+
+## APIタブ
+
+APIタブもWebContentsViewとして既存のMap・タブ配置・分割処理で管理する。`kind: "api"` とセッションIDを持ち、管理画面にはローカルファイルのURLを出さず、リクエストURLを表示する。管理画面のURL欄はAPIタブでは読み取り専用、Cmd+LはAPIタブ内のURL入力へフォーカスする。
+
+- `api-request.js`：入力検証、HTTPリクエストへの変換、認証情報を除いた保存定義の生成。
+- `api-http.js`：固定Sessionを渡すElectronのnet.request、受信制限、タイムアウト、中止、手動リダイレクト。
+- `api-tabs.js`：専用ビュー・専用IPC、実行状態、保存・履歴・複製・作業セットの連携。
+- `api.html` / `api.css` / `api.js` / `api-preload.js`：API専用画面。browserAPI・Node.jsは公開せず、API操作のみ許可。
+
+APIビューには任意サイト用のpartitionやpreloadを使わない。ローカル画面から直接fetchせず、メイン側がタブに固定されたセッションIDからSessionを取得し、net.requestに渡す。Cookieモードはcredentials:include、認証なし・Bearerはomitとする。Webタブ切り替えはリクエストのSessionや応答先に影響しない。ネットワーク待機を管理画面全体の操作ロックに入れず、タブごとにAbortControllerを保持する。
+
+専用IPCは管理下APIビューのメインフレーム・正確なローカルURLだけを認可し、呼び出し側の任意のセッションIDで送信させない。セッションIDは新規タブ作成・複製先だけに使用する。API画面のトップレベル遷移、ウィンドウ生成、webviewを拒否し、CSPで直接の通信を禁止する。結果はtextContentで表示し、HTML・スクリプト・外部画像として描画しない。
+
+応答・履歴はメモリ内のみ。履歴はタブごとに直近20件。永続化前・複製前・履歴への投入前にstoredDraftを通し、Bearer・認証系ヘッダーを除く。URL・クエリ・本文は利用者が明示保存した定義としてworkspace.jsonへ保存する。API定義の読み込みから送信は行わない。既存のschemaVersion 1はapiRequestsがない場合に空配列として読み込み、既存Web作業セットとの互換性を保つ。
+
+状態通知にrevisionを付け、入力はdraftRevisionが変化した時だけ置き換える。応答の本文・ヘッダーは初回取得と実行完了時だけ送り、普段の状態通知で5 MiBの内容を繰り返しコピーしない。タブを閉じた際は通信を中止し、遅延応答は削除済みタブへ反映しない。
