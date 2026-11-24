@@ -137,3 +137,14 @@ node-pty 1.1.0に同梱されたMac用N-APIバイナリを利用するため、e
 - 応答はtextarea/textContentで表示し、HTML・スクリプト・画像として実行しない。クリップボードは利用者の明示操作でだけ更新する。
 
 scripts/secure-build.jsをafterPackで呼び、Cookie暗号化fuseを有効化する。Macでは変更後にad-hoc署名を再設定する。scripts/secure-dev.jsは開発用Electronの同じ設定を行い、prestartから呼ぶ。Developer ID署名・公証と、Windows/Linuxの実機確認は別途必要。
+
+## Ver 0.7.0：ブラウザメニュー・履歴・ブックマーク
+
+- `browser-menu.js`は状態と操作コールバックからElectron Menuのテンプレートを生成する。管理画面の「⋮」からメインプロセスへ位置だけ渡し、ネイティブpopupを表示する。WebContentsViewより上に表示し、API/CLIではページ用の操作を無効にする。
+- `browser-library.js`はWebContentsのdid-navigate / did-navigate-in-page / page-title-updatedを監視する。トップレベルのHTTP(S) URLだけを記録し、同じビューの直近3秒以内の同一URLをまとめる。管理用・API・CLIのビューには接続しない。
+- 履歴とブックマークのsessionIdは登録元のプロファイルID。項目を開く時に存在を検証し、そのプロファイルの新しいWebタブを作る。CookieやAPIリクエスト本文はライブラリに含めない。
+- `browser-library.enc.json`はsafeStorageの非同期APIと待機上限を使い、暗号化したJSONを0600で原子的に書き込む。書き込みは直列化し、通常の履歴更新は500msまとめ、終了時にflushする。一時セッションの履歴を永続化前に除く。ブックマークは明示保存として残す。
+- 履歴・ブックマークは各2000件、復号後4 MiB、ファイル8 MiBの上限を検証する。上限超過では古い履歴を削除する。安全な保存不可・破損・復号失敗・書き込み失敗は画面へ通知し、メモリ内動作に切り替え、既存ファイルを維持する。
+- `library-window.js` / `library-preload.js` / `library.html` / `library.js` / `library.css`は専用の一覧・編集画面。IPCは管理下の正確なローカルURLとメインフレームだけ認可し、browserAPI・Node・CLIのAPIは渡さない。外部遷移・直接通信をCSPとイベントで拒否する。
+- 状態通知にrevision、検索応答に呼び出し番号を使って古い結果を無視する。行DOMを項目IDごとに再利用し、更新通知中のクリック先を保持する。名前とURLはtextContentで表示する。
+- 管理画面のブックマークダイアログは最新のメイン側pageDetailsを取得する。現在のWebタブと登録セッションを確認して保存し、アドレス欄の「☆/★」は選択中タブの状態から更新する。

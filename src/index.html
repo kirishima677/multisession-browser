@@ -89,6 +89,15 @@
           placeholder="URLまたは検索キーワード（⌘L）"
         />
       </form>
+      <button
+        id="bookmark-page"
+        class="bookmark-star"
+        title="このページをブックマーク ⌘D"
+        aria-label="このページをブックマーク"
+        disabled
+      >
+        ☆
+      </button>
       <button id="new-terminal" title="新しいターミナルタブを開く">
         ＋ CLI
       </button>
@@ -105,6 +114,15 @@
       </button>
       <button id="devtools" class="devtools" title="DevToolsを開く ⌘⌥I">
         &lt;/&gt; DevTools
+      </button>
+      <button
+        id="browser-menu"
+        class="browser-menu"
+        title="ブラウザメニュー"
+        aria-label="ブラウザメニュー"
+        aria-haspopup="menu"
+      >
+        ⋮
       </button>
     </div>
     <div id="auth-notice" class="auth-notice" role="status" hidden>

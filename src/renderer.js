@@ -559,6 +559,19 @@ function renderRuntime() {
   }
   if ($("#storage-protection"))
     $("#storage-protection").textContent = state.protection?.message || "";
+  const page = state.pageBookmark;
+  $("#bookmark-page").disabled = !page;
+  $("#bookmark-page").textContent = page?.bookmark ? "★" : "☆";
+  $("#bookmark-page").classList.toggle("saved", Boolean(page?.bookmark));
+  $("#bookmark-page").setAttribute(
+    "aria-label",
+    page?.bookmark
+      ? "このページのブックマークを編集"
+      : "このページをブックマーク",
+  );
+  $("#bookmark-page").title = page?.bookmark
+    ? "ブックマークを編集 ⌘D"
+    : "このページをブックマーク ⌘D";
   const update = state.update;
   $("#update-notice").hidden = update?.status !== "available";
   $("#update-notice-text").textContent = update?.message || "";
@@ -643,6 +656,45 @@ function appInfoModal() {
       }),
   );
 }
+async function bookmarkModal() {
+  const snapshot = await invoke("state"),
+    page = snapshot?.pageDetails;
+  if (!page) {
+    uiError = "Webページを開いてからブックマークしてください。";
+    $("#error").textContent = uiError;
+    return;
+  }
+  const existing = page.bookmark;
+  let name, url, profile;
+  showModal(
+    existing ? "ブックマークを編集" : "ブックマークを追加",
+    "保存",
+    (body) => {
+      name = field(body, "ブックマーク名", existing?.title || page.title);
+      name.maxLength = 200;
+      url = field(body, "ブックマークURL", existing?.url || page.url);
+      url.maxLength = 16384;
+      url.type = "url";
+      profile = sessionSelect(body, existing?.sessionId || page.sessionId);
+      body.append(
+        el(
+          "p",
+          "help",
+          state.browserLibrary?.writable
+            ? "登録したセッションの新しいタブで開きます。ブックマークは暗号化して保存します。"
+            : "暗号化した保存が利用できないため、この起動中のみ保持します。",
+        ),
+      );
+    },
+    () =>
+      invoke("save-bookmark", {
+        id: existing?.id,
+        title: name.value,
+        url: url.value,
+        sessionId: profile.value,
+      }),
+  );
+}
 function focusAddress() {
   $("#address").focus();
   $("#address").select();
@@ -659,6 +711,11 @@ $("#back").addEventListener("click", () => invoke("back"));
 $("#forward").addEventListener("click", () => invoke("forward"));
 $("#reload").addEventListener("click", () => invoke("reload"));
 $("#devtools").addEventListener("click", () => invoke("devtools"));
+$("#bookmark-page").addEventListener("click", bookmarkModal);
+$("#browser-menu").addEventListener("click", () => {
+  const rect = $("#browser-menu").getBoundingClientRect();
+  invoke("browser-menu", { x: rect.right - 250, y: rect.bottom });
+});
 $("#open-auth").addEventListener("click", () =>
   invoke("open-test-tools", { page: "auth" }),
 );
@@ -706,6 +763,7 @@ api.onShortcut((name) => {
   if (name === "app-info") appInfoModal();
   if (name === "new-api-tab") newTabModal(false, "api");
   if (name === "save-workset") saveWorksetModal();
+  if (name === "bookmark-page") bookmarkModal();
 });
 api.onRuntime((value) => {
   if (state) {

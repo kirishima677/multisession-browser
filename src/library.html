@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>履歴・ブックマーク</title>
+    <link rel="stylesheet" href="library.css" />
+    <script src="library.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <span class="eyebrow">BROWSER LIBRARY</span>
+        <h1>履歴・ブックマーク</h1>
+      </div>
+      <nav>
+        <button id="history-tab">履歴</button
+        ><button id="bookmarks-tab">ブックマーク</button>
+      </nav>
+    </header>
+    <main>
+      <p id="storage-status" class="storage"></p>
+      <p id="library-error" role="alert" hidden></p>
+      <p id="library-message" role="status" hidden></p>
+      <section class="filters">
+        <form id="search-form">
+          <input
+            id="query"
+            aria-label="履歴・ブックマークを検索"
+            placeholder="名前やURLで検索"
+            maxlength="512"
+          /><select id="filter-session" aria-label="一覧のセッション"></select
+          ><button type="submit">検索</button>
+        </form>
+        <div class="actions">
+          <span id="count"></span
+          ><button id="undo-bookmark" hidden>削除を元に戻す</button
+          ><button id="clear-history" class="danger">履歴を削除…</button>
+        </div>
+      </section>
+      <p class="help">
+        「開く」は、記録・登録したセッションの新しいタブで開きます。Cookieやログイン状態を別のセッションへコピーしません。
+      </p>
+      <div id="items"></div>
+      <button id="load-more" hidden>さらに表示</button>
+    </main>
+    <dialog id="editor">
+      <form id="editor-form">
+        <h2>ブックマークを編集</h2>
+        <label for="edit-title">名前</label
+        ><input
+          id="edit-title"
+          aria-label="ブックマークの名前"
+          maxlength="200"
+          required
+        /><label for="edit-url">URL</label
+        ><input
+          id="edit-url"
+          aria-label="ブックマークのURL"
+          maxlength="16384"
+          type="url"
+          required
+        /><label for="edit-session">使用するセッション</label
+        ><select
+          id="edit-session"
+          aria-label="ブックマークのセッション"
+        ></select>
+        <p id="editor-error" role="alert"></p>
+        <div class="editor-actions">
+          <button id="editor-cancel" type="button">キャンセル</button
+          ><button id="editor-save" type="submit" class="primary">保存</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

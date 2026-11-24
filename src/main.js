@@ -25,6 +25,9 @@ const { createProtection } = require("./protection");
 const { createAuthManager } = require("./auth-manager");
 const { createNetworkCapture } = require("./network-capture");
 const { createTestTools } = require("./test-tools");
+const { createBrowserLibrary, pageURL } = require("./browser-library");
+const { createLibraryWindow } = require("./library-window");
+const { browserMenuTemplate } = require("./browser-menu");
 const { reorderIds, splitForDrop, selectInSplit } = require("./tab-layout");
 const {
   COLORS,
@@ -48,6 +51,7 @@ let pageActions;
 let apiTabs;
 let terminalTabs, memoryMonitor, updateChecker;
 let protection, authManager, capture, testTools;
+let browserLibrary, libraryWindow;
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
 const appIconPath = path.join(__dirname, "..", "assets", "icon.png");
 const sitePreload = path.join(__dirname, "site-preload.js");
@@ -82,6 +86,114 @@ function profileFor(id) {
 function current() {
   return tabs.get(activeId);
 }
+function currentPage() {
+  const t = current();
+  if (!t || (t.kind && t.kind !== "web") || t.view.webContents.isDestroyed())
+    return null;
+  try {
+    const url = pageURL(t.view.webContents.getURL());
+    return {
+      tabId: t.id,
+      sessionId: t.sessionId,
+      url,
+      title: (t.view.webContents.getTitle() || new URL(url).hostname).slice(
+        0,
+        200,
+      ),
+      bookmark: browserLibrary?.find(t.sessionId, url) || null,
+    };
+  } catch {
+    return null;
+  }
+}
+async function openLibraryEntry(kind, id) {
+  if (!["history", "bookmarks"].includes(kind))
+    throw new Error("一覧の種類が不正です。");
+  const entry = browserLibrary.get(kind, id);
+  if (!entry) throw new Error("項目が見つかりません。");
+  profileFor(entry.sessionId);
+  if (overlay) throw new Error("構成・設定の画面を閉じてから開いてください。");
+  if (!win || win.isDestroyed()) createWindow();
+  const t = createTab(entry.sessionId, entry.url);
+  win.show();
+  win.focus();
+  t.view.webContents.focus();
+}
+function zoomPage(direction) {
+  const t = current();
+  if (!t || t.kind === "terminal")
+    throw new Error("このタブではズームできません。");
+  const levels = [
+      0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3,
+      4, 5,
+    ],
+    old = t.view.webContents.getZoomFactor();
+  const value =
+    direction === "reset"
+      ? 1
+      : direction === "in"
+        ? levels.find((v) => v > old + 0.001) || 5
+        : direction === "out"
+          ? [...levels].reverse().find((v) => v < old - 0.001) || 0.25
+          : null;
+  if (!value) throw new Error("ズームの指定が不正です。");
+  t.view.webContents.setZoomFactor(value);
+  publish();
+}
+function showBrowserMenu(p = {}) {
+  const t = current(),
+    contents = t?.view.webContents,
+    page = currentPage();
+  const decorate = (entries) =>
+    entries.map((entry) => ({
+      ...entry,
+      sessionName: profileFor(entry.sessionId).name,
+    }));
+  const safe = (fn) => () =>
+    Promise.resolve()
+      .then(fn)
+      .catch((error) =>
+        pageActions.report(contents, "操作できませんでした", error),
+      );
+  const template = browserMenuTemplate(
+    {
+      history: decorate(browserLibrary.recent("history")),
+      bookmarks: decorate(browserLibrary.recent("bookmarks")),
+      bookmarked: Boolean(page?.bookmark),
+      canBookmark: Boolean(page),
+      zoom: contents?.getZoomFactor() || 1,
+      canZoom: Boolean(
+        t && t.kind !== "terminal" && (page || t.kind === "api"),
+      ),
+      webPage: Boolean(page),
+      hasTab: Boolean(t),
+    },
+    {
+      shortcut,
+      openLibrary: (page) => libraryWindow.open(page),
+      openEntry: (kind, id) => safe(() => openLibraryEntry(kind, id))(),
+      zoom: (direction) => safe(() => zoomPage(direction))(),
+      find: safe(() => pageActions.openFind(contents)),
+      save: safe(() => pageActions.savePage(contents)),
+      print: safe(() => pageActions.printPage(contents)),
+      fullscreen: () => win.setFullScreen(!win.isFullScreen()),
+      tools: (page) => safe(() => command("open-test-tools", { page }))(),
+      devtools,
+      checkUpdates: () => {
+        shortcut("app-info");
+        updateChecker.check();
+      },
+      quit: () => app.quit(),
+    },
+  );
+  const options = { window: win };
+  if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
+    const [width, height] = win.getContentSize();
+    options.x = Math.max(0, Math.min(width, Math.round(p.x)));
+    options.y = Math.max(0, Math.min(height, Math.round(p.y)));
+  }
+  Menu.buildFromTemplate(template).popup(options);
+}
 function state() {
   return {
     revision: ++stateRevision,
@@ -89,6 +201,7 @@ function state() {
     worksets: config.worksets,
     colors: COLORS,
     ...runtime(),
+    pageDetails: currentPage(),
     activeId,
     split,
     draggingTab,
@@ -129,6 +242,8 @@ function runtime() {
     update: updateChecker?.get() || null,
     protection: protection?.status() || null,
     auth: authManager?.summaries() || [],
+    browserLibrary: browserLibrary?.summary() || null,
+    pageBookmark: currentPage(),
   };
 }
 function publishRuntime() {
@@ -138,6 +253,7 @@ function publishRuntime() {
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send("browser:state", state());
   testTools?.publish();
+  libraryWindow?.publish();
 }
 function activateTab(id) {
   split = selectInSplit(split, activeId, id);
@@ -235,6 +351,7 @@ function configuredSession(profile) {
 }
 function guardContents(contents, profile) {
   capture?.track(contents, profile.id);
+  browserLibrary?.track(contents, profile.id);
   installKeyboard(contents);
   installContextMenu(contents, profile);
   contents.on("will-navigate", (event, url) => {
@@ -480,6 +597,7 @@ async function resetSession(id, remove) {
   await ses.clearData();
   await ses.clearAuthCache();
   await authManager.clearSession(id);
+  await browserLibrary.removeSession(id, remove);
   capture.clear(id);
   if (remove) {
     config.sessions = config.sessions.filter((s) => s.id !== id);
@@ -501,6 +619,21 @@ async function command(action, p = {}) {
       overlay = Boolean(p.open);
       if (overlay) draggingTab = false;
       layout();
+      break;
+    case "browser-menu":
+      showBrowserMenu(p);
+      break;
+    case "open-library":
+      libraryWindow.open(p.page || "history");
+      break;
+    case "save-bookmark":
+      await browserLibrary.saveBookmark(p);
+      break;
+    case "remove-bookmark":
+      await browserLibrary.removeBookmark(p.id);
+      break;
+    case "zoom":
+      zoomPage(p.direction);
       break;
     case "open-test-tools": {
       const page = p.page || "auth";
@@ -779,6 +912,22 @@ function installKeyboard(contents) {
       };
     if (!input.alt && !input.shift && key === "l")
       action = () => shortcut("address");
+    if (!input.alt && !input.shift && key === "d")
+      action = () => shortcut("bookmark-page");
+    if (
+      !input.alt &&
+      !input.shift &&
+      ((process.platform === "darwin" && key === "y") ||
+        (process.platform !== "darwin" && key === "h"))
+    )
+      action = () => libraryWindow.open("history");
+    if (!input.alt && input.shift && key === "o")
+      action = () => libraryWindow.open("bookmarks");
+    if (!input.alt && ["+", "=", "-", "0"].includes(key))
+      action = () => {
+        if (current()?.kind !== "terminal")
+          zoomPage(key === "0" ? "reset" : key === "-" ? "out" : "in");
+      };
     if (!input.alt && !input.shift && key === "t")
       action = () => shortcut("new-tab");
     if (!input.alt && input.shift && key === "s")
@@ -880,6 +1029,31 @@ function installMenu() {
           { role: "paste" },
           { role: "pasteAndMatchStyle" },
           { role: "selectAll" },
+        ],
+      },
+      {
+        label: "履歴",
+        submenu: [
+          {
+            label: "履歴をすべて表示…",
+            accelerator: process.platform === "darwin" ? "Cmd+Y" : "Ctrl+H",
+            click: () => libraryWindow.open("history"),
+          },
+        ],
+      },
+      {
+        label: "ブックマーク",
+        submenu: [
+          {
+            label: "このページをブックマーク…",
+            accelerator: "CmdOrCtrl+D",
+            click: () => shortcut("bookmark-page"),
+          },
+          {
+            label: "ブックマークを管理…",
+            accelerator: "CmdOrCtrl+Shift+O",
+            click: () => libraryWindow.open("bookmarks"),
+          },
         ],
       },
       {
@@ -1095,6 +1269,24 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
+  browserLibrary = createBrowserLibrary({
+    directory: app.getPath("userData"),
+    safeStorage,
+    canPersist: () => protection.status().persistentAllowed,
+    getSessions: () => config.sessions,
+    publish: () => {
+      publishRuntime();
+      libraryWindow?.publish();
+    },
+  });
+  await browserLibrary.init();
+  libraryWindow = createLibraryWindow({
+    library: browserLibrary,
+    getSessions: () => config.sessions,
+    openEntry: openLibraryEntry,
+    securePreferences,
+    installContextMenu,
+  });
   pageActions = createPageActions(() => win);
   apiTabs = createApiTabs({
     tabs,
@@ -1146,9 +1338,22 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
+let quitReady = false,
+  quitting = false;
+app.on("before-quit", (event) => {
   terminalTabs?.shutdown();
   memoryMonitor?.stop();
   capture?.stop();
   testTools?.close();
+  libraryWindow?.close();
+  if (!quitReady && browserLibrary) {
+    event.preventDefault();
+    if (!quitting) {
+      quitting = true;
+      browserLibrary.stop().finally(() => {
+        quitReady = true;
+        app.quit();
+      });
+    }
+  }
 });

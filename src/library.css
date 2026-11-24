@@ -1,0 +1,262 @@
+:root {
+  font:
+    13px -apple-system,
+    BlinkMacSystemFont,
+    "Hiragino Sans",
+    sans-serif;
+  color: #2b3955;
+  background: #f6f8fc;
+  --line: #e0e6f0;
+  --muted: #7c89a1;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+[hidden] {
+  display: none !important;
+}
+header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px 28px;
+  background: #fbfcff;
+  border-bottom: 1px solid var(--line);
+}
+h1 {
+  font-size: 23px;
+  margin: 6px 0 0;
+}
+h2 {
+  font-size: 18px;
+  margin-top: 0;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 2px;
+  font-weight: 650;
+  color: #909db3;
+}
+nav {
+  display: flex;
+  gap: 6px;
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button {
+  color: inherit;
+  background: white;
+  border: 1px solid #d7dfed;
+  border-radius: 7px;
+  padding: 9px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover {
+  background: #edf1fb;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+button:focus-visible,
+input:focus,
+select:focus {
+  outline: 2px solid #8d9bef;
+  outline-offset: 1px;
+}
+.selected,
+.primary {
+  color: white;
+  background: #596be4;
+  border-color: #596be4;
+}
+main {
+  padding: 18px 28px 28px;
+}
+.storage,
+.help {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.storage.warning {
+  color: #9b6b32;
+  background: #fff2df;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+.filters {
+  padding: 18px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+form#search-form {
+  display: flex;
+  gap: 8px;
+}
+input,
+select {
+  color: #2b3955;
+  background: #fafbfe;
+  border: 1px solid #dce3ef;
+  border-radius: 7px;
+  padding: 10px 11px;
+}
+#query {
+  flex: 1;
+  min-width: 100px;
+}
+#filter-session {
+  max-width: 230px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+#count {
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: auto;
+}
+.danger {
+  color: #ab5f66;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin: 10px 0;
+}
+.item-info {
+  min-width: 0;
+  flex: 1;
+}
+.item-title {
+  font-weight: 650;
+  font-size: 13px;
+  margin-bottom: 7px;
+}
+.item-url {
+  font:
+    11px ui-monospace,
+    Menlo,
+    monospace;
+  color: #8290a9;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.item-meta {
+  margin-top: 8px;
+  font-size: 10px;
+  color: #8b97ac;
+}
+.session-tag {
+  display: inline-block;
+  border-left: 3px solid var(--session, #7182dc);
+  padding-left: 7px;
+  margin-right: 8px;
+  color: #65738b;
+}
+.item-actions {
+  display: flex;
+  gap: 6px;
+}
+.item-actions button {
+  font-size: 11px;
+  padding: 7px 10px;
+}
+.empty {
+  padding: 50px 20px;
+  text-align: center;
+  color: #8d98ad;
+  font-size: 12px;
+}
+#load-more {
+  display: block;
+  margin: 18px auto;
+}
+#library-error,
+#library-message {
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+#library-error {
+  color: #a14b55;
+  background: #fceef0;
+}
+#library-message {
+  color: #39745e;
+  background: #e9f4ed;
+}
+dialog {
+  width: 460px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  color: inherit;
+  box-shadow: 0 20px 90px #28375140;
+}
+dialog::backdrop {
+  background: #23335440;
+}
+dialog label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 15px 0 7px;
+}
+dialog input,
+dialog select {
+  width: 100%;
+}
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+#editor-error {
+  color: #ac5963;
+  font-size: 11px;
+}
+@media (max-width: 820px) {
+  header {
+    padding: 18px 20px;
+  }
+  main {
+    padding: 14px 20px;
+  }
+  .item {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .item-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  form#search-form {
+    flex-wrap: wrap;
+  }
+  #filter-session {
+    max-width: 180px;
+  }
+}
