@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   normalizeURL,
+  resolveAddressInput,
   allowedNavigation,
   makeSession,
   partitionFor,
@@ -62,4 +63,45 @@ test("configuration persists metadata with atomic replacement", () => {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("address input distinguishes websites, local development and search queries", () => {
+  assert.equal(resolveAddressInput("example.com"), "https://example.com/");
+  assert.equal(
+    resolveAddressInput("example.com:8080/path?q=1"),
+    "https://example.com:8080/path?q=1",
+  );
+  assert.equal(
+    resolveAddressInput("http://localhost:3000/path"),
+    "http://localhost:3000/path",
+  );
+  assert.equal(resolveAddressInput("localhost:3000"), "http://localhost:3000/");
+  assert.equal(resolveAddressInput("127.0.0.1:8080"), "http://127.0.0.1:8080/");
+  assert.equal(resolveAddressInput("[::1]:3000"), "http://[::1]:3000/");
+  assert.equal(
+    resolveAddressInput("example.com/path?q=a#part"),
+    "https://example.com/path?q=a#part",
+  );
+  assert.equal(resolveAddressInput("日本語.jp"), "https://xn--wgv71a119e.jp/");
+  for (const query of [
+    "パスキー 認証",
+    "electron",
+    "C++ browser",
+    "a & b #c ?",
+    "what is node.js",
+    "site:example.com passkey",
+    "error:403",
+  ]) {
+    const url = new URL(resolveAddressInput(query));
+    assert.equal(url.origin, "https://www.google.com");
+    assert.equal(url.pathname, "/search");
+    assert.equal(url.searchParams.get("q"), query);
+  }
+  for (const url of [
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "data:text/html,hi",
+    "https://user:secret@example.com",
+  ])
+    assert.throws(() => resolveAddressInput(url));
 });

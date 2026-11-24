@@ -61,10 +61,10 @@
         <span id="address-dot" class="dot"></span
         ><input
           id="address"
-          aria-label="URL"
+          aria-label="URLまたは検索キーワード"
           spellcheck="false"
           autocomplete="off"
-          placeholder="URLを入力してください（⌘L）"
+          placeholder="URLまたは検索キーワード（⌘L）"
         />
       </form>
       <button id="open-as" title="このURLを別のセッションで開く">
@@ -72,6 +72,14 @@
       </button>
       <button id="devtools" class="devtools" title="DevToolsを開く ⌘⌥I">
         &lt;/&gt; DevTools
+      </button>
+    </div>
+    <div id="auth-notice" class="auth-notice" role="status" hidden>
+      <span
+        >このビルドはパスキー非対応です。認証画面の「別の方法を試す」から、パスワードなどを選択してください。</span
+      >
+      <button id="dismiss-auth-notice" aria-label="パスキーの案内を閉じる">
+        ×
       </button>
     </div>
     <main id="content">

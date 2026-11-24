@@ -9,7 +9,7 @@ test.beforeAll(async () => {
   server = http.createServer((req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(
-      '<!doctype html><title>Session fixture</title><h1>Local test site</h1><a href="/next">Next</a>',
+      '<!doctype html><title>Session fixture</title><h1>Local test site</h1><a href="/next">Next</a><input aria-label="Edit me" value="fixture">',
     );
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -78,10 +78,10 @@ test("macOS browser isolates sessions, shares tabs, persists logins, resets and 
     let state = await command(shell, "state");
     const [a, b] = state.sessions;
     await shell
-      .getByRole("textbox", { name: "URL", exact: true })
+      .getByRole("textbox", { name: "URLまたは検索キーワード", exact: true })
       .fill(baseURL);
     await shell
-      .getByRole("textbox", { name: "URL", exact: true })
+      .getByRole("textbox", { name: "URLまたは検索キーワード", exact: true })
       .press("Enter");
     const pageA = await site(application);
     await pageA.evaluate(() => {
@@ -322,7 +322,10 @@ test("four roles remain independent and macOS keyboard shortcuts control the hos
       });
     });
     await expect(
-      shell.getByRole("textbox", { name: "URL", exact: true }),
+      shell.getByRole("textbox", {
+        name: "URLまたは検索キーワード",
+        exact: true,
+      }),
     ).toBeFocused();
     await application.evaluate(({ webContents }) => {
       const contents = webContents
@@ -343,6 +346,248 @@ test("four roles remain independent and macOS keyboard shortcuts control the hos
     await expect(shell.getByRole("dialog")).toBeVisible();
     await shell.keyboard.press("Escape");
     await expect(shell.getByRole("dialog")).not.toBeVisible();
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("right-click menus target the originating page and open links in its session", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-menu-"));
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    await command(shell, "navigate", { url: `${baseURL}/menus` });
+    const page = await site(application, "/menus");
+    await page.evaluate(() => {
+      document.cookie = "menu-session=a; Path=/";
+    });
+    await application.evaluate(({ Menu, clipboard }) => {
+      const popup = Menu.prototype.popup;
+      Menu.prototype.popup = function (options) {
+        global.__contextMenu = this;
+        this.once("menu-will-show", () => {
+          global.__menuShown = true;
+        });
+        return popup.call(this, options);
+      };
+      // Do not touch the user's clipboard during automated tests.
+      clipboard.writeText = (text) => {
+        global.__copiedText = text;
+      };
+    });
+    await page.getByRole("link", { name: "Next" }).click({ button: "right" });
+    await expect
+      .poll(() => application.evaluate(() => Boolean(global.__menuShown)))
+      .toBe(true);
+    const menu = await application.evaluate(() => {
+      const menu = global.__contextMenu;
+      const result = menu.items.map((item) => ({
+        id: item.id,
+        enabled: item.enabled,
+      }));
+      menu.closePopup();
+      menu.getMenuItemById("copy-link").click();
+      return { items: result, copied: global.__copiedText };
+    });
+    expect(menu.copied).toBe(`${baseURL}/next`);
+    expect(menu.items.some((item) => item.id === "inspect")).toBe(true);
+    await application.evaluate(() =>
+      global.__contextMenu.getMenuItemById("open-link").click(),
+    );
+    const next = await site(application, "/next");
+    expect(await next.evaluate(() => document.cookie)).toContain(
+      "menu-session=a",
+    );
+    const state = await command(shell, "state");
+    expect(new Set(state.tabs.map((t) => t.sessionId)).size).toBe(1);
+    // Inspect the clicked page, even after another tab has become active.
+    await application.evaluate(() =>
+      global.__contextMenu.getMenuItemById("inspect").click(),
+    );
+    await expect
+      .poll(() =>
+        application.evaluate(({ webContents }) =>
+          webContents
+            .getAllWebContents()
+            .some((c) => c.getURL().endsWith("/menus") && c.isDevToolsOpened()),
+        ),
+      )
+      .toBe(true);
+    await application.evaluate(({ webContents }) => {
+      for (const c of webContents.getAllWebContents())
+        if (c.isDevToolsOpened()) c.closeDevTools();
+    });
+
+    await next
+      .getByRole("textbox", { name: "Edit me" })
+      .click({ button: "right" });
+    await expect
+      .poll(() =>
+        application.evaluate(() =>
+          Boolean(global.__contextMenu?.getMenuItemById("paste")),
+        ),
+      )
+      .toBe(true);
+    expect(
+      await application.evaluate(() => {
+        const menu = global.__contextMenu;
+        menu.closePopup();
+        return ["cut", "copy", "paste", "select-all"].every((id) =>
+          Boolean(menu.getMenuItemById(id)),
+        );
+      }),
+    ).toBe(true);
+
+    // URL input in the host gets editing actions too.
+    await shell
+      .getByRole("textbox", { name: "URLまたは検索キーワード", exact: true })
+      .click({ button: "right" });
+    await expect
+      .poll(() =>
+        application.evaluate(
+          () => !global.__contextMenu?.getMenuItemById("inspect"),
+        ),
+      )
+      .toBe(true);
+    await application.evaluate(() => global.__contextMenu.closePopup());
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("unsupported WebAuthn settles promptly, reports its limitation and leaves other credentials untouched", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-passkey-"));
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    await command(shell, "navigate", { url: `${baseURL}/passkeys` });
+    const page = await site(application, "/passkeys");
+    expect(
+      await page.evaluate(() =>
+        PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+      ),
+    ).toBe(false);
+    // Background conditional autofill must not interrupt the user with a banner.
+    const conditional = await page.evaluate(async () => {
+      try {
+        await navigator.credentials.get({
+          publicKey: { challenge: new Uint8Array(32) },
+          mediation: "conditional",
+        });
+      } catch (error) {
+        return error.name;
+      }
+    });
+    expect(conditional).toBe("NotAllowedError");
+    expect((await command(shell, "state")).tabs[0].authNotice).toBe(false);
+    for (const method of ["get", "create"]) {
+      const result = await page.evaluate(async (method) => {
+        return Promise.race([
+          navigator.credentials[method]({
+            publicKey: { challenge: new Uint8Array(32) },
+          }).then(
+            () => ({ success: true }),
+            (error) => ({ name: error.name, message: error.message }),
+          ),
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ name: "Hung" }), 1500),
+          ),
+        ]);
+      }, method);
+      expect(result.name).toBe("NotAllowedError");
+      expect(result.message).toContain("Choose another sign-in method");
+    }
+    await expect(
+      shell.getByText(/このビルドはパスキー非対応です/),
+    ).toBeVisible();
+    expect(await page.evaluate(() => typeof window.browserAPI)).toBe(
+      "undefined",
+    );
+    const normal = await page.evaluate(async () => {
+      try {
+        return await navigator.credentials.get({ password: true });
+      } catch (error) {
+        return { name: error.name, message: error.message };
+      }
+    });
+    expect(normal?.message || "").not.toContain("Multisession Browser");
+    await shell.getByRole("button", { name: "パスキーの案内を閉じる" }).click();
+    await expect(
+      shell.getByText(/このビルドはパスキー非対応です/),
+    ).not.toBeVisible();
+    // OAuth child windows must receive the same fail-fast behavior.
+    const popupPromise = application.waitForEvent("window");
+    await page.evaluate(
+      (url) => window.open(url, "auth"),
+      `${baseURL}/passkey-popup`,
+    );
+    const popup = await popupPromise;
+    await popup.waitForLoadState();
+    expect(
+      await popup.evaluate(async () => {
+        try {
+          await navigator.credentials.get({
+            publicKey: { challenge: new Uint8Array(32) },
+          });
+        } catch (error) {
+          return error.name;
+        }
+      }),
+    ).toBe("NotAllowedError");
+    await expect(
+      shell.getByText(/このビルドはパスキー非対応です/),
+    ).toBeVisible();
+    await popup.close();
+    await command(shell, "navigate", { url: `${baseURL}/after-auth` });
+    await site(application, "/after-auth");
+    await expect(
+      shell.getByText(/このビルドはパスキー非対応です/),
+    ).not.toBeVisible();
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("address input searches text and navigates URLs without external requests in the test", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-search-"));
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    await application
+      .context()
+      .route("https://www.google.com/search?**", (route) =>
+        route.fulfill({
+          contentType: "text/html",
+          body: "<!doctype html><title>Search result</title><h1>Search fixture</h1>",
+        }),
+      );
+    const address = shell.getByRole("textbox", {
+      name: "URLまたは検索キーワード",
+      exact: true,
+    });
+    await address.fill("Gmail パスキー & 認証");
+    await address.press("Enter");
+    await expect
+      .poll(async () => (await command(shell, "state")).tabs[0].url)
+      .toContain("https://www.google.com/search?");
+    let state = await command(shell, "state");
+    expect(new URL(state.tabs[0].url).searchParams.get("q")).toBe(
+      "Gmail パスキー & 認証",
+    );
+    await address.fill(`${baseURL}/from-address`);
+    await address.press("Enter");
+    await site(application, "/from-address");
+    state = await command(shell, "state");
+    expect(state.tabs[0].url).toBe(`${baseURL}/from-address`);
   } finally {
     if (application) await application.close();
     fs.rmSync(directory, { recursive: true, force: true });

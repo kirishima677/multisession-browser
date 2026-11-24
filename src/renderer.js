@@ -152,6 +152,11 @@ function render(next) {
   $("#address-dot").style.setProperty("--color", profile?.color || "#6478ff");
   $("#back").disabled = !active?.canGoBack;
   $("#forward").disabled = !active?.canGoForward;
+  $("#auth-notice").hidden = !active?.authNotice;
+  document.body.classList.toggle(
+    "has-auth-notice",
+    Boolean(active?.authNotice),
+  );
   $("#welcome").hidden = Boolean(active && active.url !== "about:blank");
   $("#status").textContent = profile
     ? `${profile.name}  /  ${profile.persistent ? "保存" : "一時"}${active?.loading ? "  · 読み込み中…" : ""}`
@@ -377,3 +382,7 @@ api.onShortcut((name) => {
   if (name === "save-workset") saveWorksetModal();
 });
 invoke("state");
+
+$("#dismiss-auth-notice").addEventListener("click", () =>
+  invoke("dismiss-auth-notice"),
+);

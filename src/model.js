@@ -29,6 +29,41 @@ function normalizeURL(value) {
     throw new Error("認証情報を含むURLは保存・表示できません。");
   return url.href;
 }
+function resolveAddressInput(value) {
+  if (typeof value !== "string" || value.length > 16384)
+    throw new Error("URLまたは検索キーワードを入力してください。");
+  const input = value.trim();
+  if (!input || input === "about:blank") return "about:blank";
+  const hostWithPort =
+    /^(?:localhost|[^\s/:]+\.[^\s/:]+|\[[a-f\d:]+\]):\d+(?:[/?#]|$)/i.test(
+      input,
+    );
+  const explicitURL =
+    /^(?:https?|file|data|javascript|vbscript|about|blob|mailto|tel|ftp|chrome|chrome-extension):/i.test(
+      input,
+    ) || /^[a-z][a-z\d+.-]*:\/\//i.test(input);
+  if (explicitURL && !hostWithPort) return normalizeURL(input);
+  if (!/\s/.test(input)) {
+    try {
+      const url = new URL(`https://${input}`);
+      const hostname = url.hostname;
+      const local =
+        hostname === "localhost" ||
+        hostname.endsWith(".localhost") ||
+        hostname.startsWith("[") ||
+        /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+      if (local || hostname.includes(".")) {
+        if (local) url.protocol = "http:";
+        return normalizeURL(url.href);
+      }
+    } catch {
+      /* Plain text is a search query. */
+    }
+  }
+  const search = new URL("https://www.google.com/search");
+  search.searchParams.set("q", input);
+  return search.href;
+}
 function allowedNavigation(value) {
   try {
     return (
@@ -113,6 +148,7 @@ module.exports = {
   COLORS,
   label,
   normalizeURL,
+  resolveAddressInput,
   allowedNavigation,
   makeSession,
   partitionFor,

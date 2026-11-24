@@ -557,3 +557,36 @@ dialog .help {
     display: none;
   }
 }
+
+.auth-notice {
+  position: absolute;
+  left: 236px;
+  right: 0;
+  top: 152px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 16px;
+  background: #fff7e8;
+  color: #886021;
+  border-bottom: 1px solid #eddbb5;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.auth-notice[hidden] {
+  display: none;
+}
+.auth-notice span {
+  flex: 1;
+}
+.auth-notice button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 20px;
+  padding: 0 5px;
+}
+.has-auth-notice #content {
+  top: 204px;
+}

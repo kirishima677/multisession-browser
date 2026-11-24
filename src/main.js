@@ -6,14 +6,17 @@ const {
   session,
   dialog,
   Menu,
+  clipboard,
 } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
+const { contextMenuTemplate } = require("./context-menu");
 const {
   COLORS,
   label,
   normalizeURL,
+  resolveAddressInput,
   allowedNavigation,
   makeSession,
   partitionFor,
@@ -27,6 +30,7 @@ const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
 const runId = randomUUID();
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
+const sitePreload = path.join(__dirname, "site-preload.js");
 const shellURL = pathToFileURL(path.join(__dirname, "index.html")).href;
 let win,
   config,
@@ -69,6 +73,7 @@ function state() {
       url: t.view.webContents.getURL() || "about:blank",
       loading: t.view.webContents.isLoading(),
       error: t.error || "",
+      authNotice: Boolean(t.authNotice),
       canGoBack: t.view.webContents.navigationHistory.canGoBack(),
       canGoForward: t.view.webContents.navigationHistory.canGoForward(),
     })),
@@ -80,12 +85,13 @@ function publish() {
 function layout() {
   if (!win || win.isDestroyed()) return;
   const [width, height] = win.getContentSize();
+  const top = chrome.top + (current()?.authNotice ? 52 : 0);
   for (const t of tabs.values()) {
     t.view.setBounds({
       x: chrome.sidebar,
-      y: chrome.top,
+      y: top,
       width: Math.max(0, width - chrome.sidebar),
-      height: Math.max(0, height - chrome.top - chrome.bottom),
+      height: Math.max(0, height - top - chrome.bottom),
     });
     const visible =
       t.id === activeId &&
@@ -149,6 +155,7 @@ function configuredSession(profile) {
 }
 function guardContents(contents, profile) {
   installKeyboard(contents);
+  installContextMenu(contents, profile);
   contents.on("will-navigate", (event, url) => {
     if (!allowedNavigation(url)) event.preventDefault();
   });
@@ -167,6 +174,7 @@ function guardContents(contents, profile) {
         autoHideMenuBar: true,
         webPreferences: {
           ...securePreferences,
+          preload: sitePreload,
           session: configuredSession(profile),
         },
       },
@@ -197,6 +205,7 @@ function createTab(sessionId, value = "about:blank") {
   const view = new WebContentsView({
     webPreferences: {
       ...securePreferences,
+      preload: sitePreload,
       session: configuredSession(profile),
     },
   });
@@ -219,6 +228,15 @@ function createTab(sessionId, value = "about:blank") {
     t.title = title;
     publish();
   });
+  view.webContents.on(
+    "did-start-navigation",
+    (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) {
+        t.authNotice = false;
+        update();
+      }
+    },
+  );
   view.webContents.on("did-start-loading", () => {
     t.error = "";
     update();
@@ -263,10 +281,8 @@ function closeTab(id, ensure = true) {
   layout();
   publish();
 }
-function devtools() {
-  const t = current();
-  if (!t) return;
-  const contents = t.view.webContents;
+function openDevtools(contents, profile) {
+  if (contents.isDestroyed()) return;
   if (contents.isDevToolsOpened()) {
     contents.devToolsWebContents?.focus();
     return;
@@ -275,12 +291,49 @@ function devtools() {
     const toolWindow = BrowserWindow.fromWebContents(
       contents.devToolsWebContents,
     );
-    toolWindow?.setTitle(`${profileFor(t.sessionId).name} — DevTools`);
+    toolWindow?.setTitle(`${profile.name} — DevTools`);
   });
   contents.openDevTools({
     mode: "detach",
-    title: `${profileFor(t.sessionId).name} — DevTools`,
+    title: `${profile.name} — DevTools`,
   });
+}
+function devtools() {
+  const t = current();
+  if (t) openDevtools(t.view.webContents, profileFor(t.sessionId));
+}
+function installContextMenu(contents, profile) {
+  contents.on("context-menu", (_event, params) => {
+    const template = contextMenuTemplate(contents, params, {
+      clipboard,
+      browserPage: Boolean(profile),
+      openTab: profile ? (url) => createTab(profile.id, url) : undefined,
+      inspect: (target, x, y) => {
+        openDevtools(target, profile);
+        target.inspectElement(x, y);
+      },
+    });
+    if (!template.length) return;
+    const owner = BrowserWindow.fromWebContents(contents) || win;
+    Menu.buildFromTemplate(template).popup({
+      window: owner,
+      frame: params.frame || undefined,
+    });
+  });
+}
+function originatingTab(contents) {
+  let id = contents.id;
+  const visited = new Set();
+  while (!visited.has(id)) {
+    visited.add(id);
+    const tab = [...tabs.values()].find((t) => t.view.webContents.id === id);
+    if (tab) return tab;
+    const popup = [...popups.values()].find(
+      (p) => !p.window.isDestroyed() && p.window.webContents.id === id,
+    );
+    if (!popup) return;
+    id = popup.openerId;
+  }
 }
 async function confirm(message, detail) {
   const result = await dialog.showMessageBox(win, {
@@ -346,7 +399,7 @@ async function command(action, p = {}) {
       break;
     case "navigate": {
       const t = current();
-      const url = normalizeURL(p.url);
+      const url = resolveAddressInput(p.url);
       if (t) {
         t.error = "";
         t.view.webContents.loadURL(url).catch(() => {});
@@ -363,6 +416,10 @@ async function command(action, p = {}) {
       break;
     case "reload":
       current()?.view.webContents.reload();
+      break;
+    case "dismiss-auth-notice":
+      if (current()) current().authNotice = false;
+      layout();
       break;
     case "devtools":
       devtools();
@@ -579,6 +636,7 @@ function createWindow() {
     },
   });
   installKeyboard(win.webContents);
+  installContextMenu(win.webContents);
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.on("resize", layout);
@@ -615,6 +673,14 @@ app.whenReady().then(() => {
     app.quit();
     return;
   }
+  ipcMain.on("browser:passkey-unavailable", (event) => {
+    // Only managed site tabs/popups can set their own informational banner.
+    const tab = originatingTab(event.sender);
+    if (!tab || tab.authNotice) return;
+    tab.authNotice = true;
+    layout();
+    publish();
+  });
   ipcMain.handle("browser:command", async (event, action, p) => {
     if (
       !win ||

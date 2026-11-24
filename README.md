@@ -9,6 +9,8 @@
 - **タブごとのDevTools**：Elements・Console・Network・Applicationなどを別ウィンドウで利用できます。
 - **作業セット**：タブのURL・並び順・セッションをまとめて保存、復元できます。
 - **セッション管理**：名前・色の変更、保存データの初期化、セッションの削除。
+- **アドレス欄から検索**：URL以外の語句はGoogle検索。ドメイン名はHTTPS、`localhost`やIPアドレスはHTTPで開きます。明示した `http://` / `https://` を優先します。
+- **右クリックメニュー**：コピー・貼り付け・リンクを同じセッションのタブで開く・画像コピー・ページ操作・要素の検証。
 - **認証ポップアップ**：開いた元のセッションを引き継ぎます。
 
 最初は `A社 a1`・`A社 a2`・`B社 b`・`運営 u` の4つの保存セッションを用意します。これらは表示用のラベルであり、対象サイトのアカウント作成や自動ログインは行いません。
@@ -30,7 +32,7 @@ npm start
 4. `DevTools` で選択中のタブの通信・ログ・Cookieを確認します。
 5. 「構成を保存」で、次回利用するタブ構成を保存します。
 
-URLのスキームを省略するとHTTPSとして開きます。ローカルのHTTPサーバーには `http://localhost:3000` のように明示してください。
+ドメイン名だけならHTTPS、`localhost:3000`・IPアドレスならHTTPとして開きます。日本語や単語、スペースを含む入力はGoogle検索します。検索には選択中のセッションを使用し、履歴一覧や検索候補の通信は実装していません。
 
 ## Macのアプリを作る
 
@@ -43,6 +45,8 @@ npm run dist:mac
 ```
 
 Apple Siliconでは `dist/mac-arm64/Multisession Browser.app`、Intelでは通常 `dist/mac/Multisession Browser.app` に生成します。
+
+今回生成・検証したVer 0.1.1は、旧版を残すため `dist/v0.1.1/mac-arm64/Multisession Browser.app` に配置しています。利用中の旧版を `⌘Q` で終了してから開いてください。保存セッションと作業セットは引き続き使用します。
 
 別のCPUを指定する場合：
 
@@ -102,6 +106,14 @@ MSB_EXECUTABLE="$PWD/dist/mac-arm64/Multisession Browser.app/Contents/MacOS/Mult
 MSB_USER_DATA=/tmp/msb-dev-profile npm start
 ```
 
+## パスキーが要求される場合（Gmailなど）
+
+**現在の未署名ビルドではWebAuthn（パスキー・セキュリティキー）は非対応です。** Ver 0.1.1では要求を待ち続けずに `NotAllowedError` で終了し、画面上に案内を表示します。認証画面の「別の方法を試す」から、パスワードなどの利用可能な方法を選んでください。認証を成功扱いにしたり、二要素認証を迂回したりはしません。
+
+パスキーのみが許可されたアカウントは、このビルドではログインできません。別ブラウザでログインしても、このアプリへCookieが引き継がれるわけではありません。Gmailの実アカウントでの認証完了は未検証です。
+
+ElectronのmacOSネイティブパスキーにはコード署名・provisioning profile・サイトとのAssociated Domains関連付け等が必要です。Gmailなど任意サイトのパスキーをブラウザとして扱うにはAppleのブラウザ向け権限とネイティブ認証連携の設計が必要で、単に設定を有効にするだけでは対応できません。詳しくは [認証対応の制約](docs/authentication.md) を参照してください。
+
 ## 対応範囲
 
 一般的なHTTP / HTTPSサイトを対象としています。SSO、外部アプリへの遷移、WebAuthn、クライアント証明書などは対象サイトでの互換性確認が必要です。通常のChromeとの完全な同一動作を保証するものではありません。
@@ -111,3 +123,5 @@ MSB_USER_DATA=/tmp/msb-dev-profile npm start
 - [初期仕様](docs/specification.md)
 - [構成と開発上の注意](docs/architecture.md)
 - [検証記録](docs/verification.md)
+
+- [変更履歴](CHANGELOG.md)
