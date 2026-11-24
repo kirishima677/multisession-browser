@@ -12,6 +12,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
 const { contextMenuTemplate } = require("./context-menu");
+const { createPageActions } = require("./page-actions");
 const { reorderIds, splitForDrop, selectInSplit } = require("./tab-layout");
 const {
   COLORS,
@@ -31,6 +32,7 @@ const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
 const runId = randomUUID();
 let stateRevision = 0;
+let pageActions;
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
 const sitePreload = path.join(__dirname, "site-preload.js");
 const shellURL = pathToFileURL(path.join(__dirname, "index.html")).href;
@@ -159,13 +161,21 @@ function configuredSession(profile) {
         () => callback(false),
       );
   });
-  ses.on("will-download", (_event, item) => {
+  ses.on("will-download", (_event, item, contents) => {
     item.setSaveDialogOptions({
-      title: `${profileFor(profile.id).name} — ダウンロード`,
+      title: `${profile.name} — ダウンロード`,
       defaultPath: path.join(
         app.getPath("downloads"),
         path.basename(item.getFilename()),
       ),
+    });
+    item.once("done", (_event, state) => {
+      if (state === "interrupted" && contents && !contents.isDestroyed())
+        pageActions.report(
+          contents,
+          "ダウンロードできませんでした",
+          "接続やアクセス権を確認して、もう一度お試しください。",
+        );
     });
   });
   return ses;
@@ -342,6 +352,16 @@ function installContextMenu(contents, profile) {
       clipboard,
       browserPage: Boolean(profile),
       openTab: profile ? (url) => createTab(profile.id, url) : undefined,
+      download: profile
+        ? (url, kind) => pageActions.download(contents, url, kind)
+        : undefined,
+      savePage: profile ? () => pageActions.savePage(contents) : undefined,
+      printPage: profile ? () => pageActions.printPage(contents) : undefined,
+      findPage: profile
+        ? (query) => pageActions.openFind(contents, query)
+        : undefined,
+      onError: (error) =>
+        pageActions.report(contents, "操作できませんでした", error),
       inspect: (target, x, y) => {
         openDevtools(target, profile);
         target.inspectElement(x, y);
@@ -581,6 +601,21 @@ function installKeyboard(contents) {
       return;
     const key = input.key.toLowerCase();
     let action;
+    if (!input.alt && !input.shift && key === "f")
+      action = () =>
+        pageActions.openFind(
+          contents === win?.webContents
+            ? current()?.view.webContents
+            : contents,
+        );
+    if (!input.alt && !input.shift && key === "p")
+      action = () => {
+        const target =
+          contents === win?.webContents
+            ? current()?.view.webContents
+            : contents;
+        if (target) pageActions.printPage(target);
+      };
     if (!input.alt && !input.shift && key === "l")
       action = () => shortcut("address");
     if (!input.alt && !input.shift && key === "t")
@@ -637,6 +672,16 @@ function installMenu() {
             },
           },
           {
+            label: "印刷…",
+            accelerator: "CmdOrCtrl+P",
+            click: () => {
+              const target = pageActions.focusedContents(
+                current()?.view.webContents,
+              );
+              if (target) pageActions.printPage(target);
+            },
+          },
+          {
             label: "作業セットを保存",
             accelerator: "CmdOrCtrl+Shift+S",
             click: () => shortcut("save-workset"),
@@ -652,12 +697,21 @@ function installMenu() {
           { role: "cut" },
           { role: "copy" },
           { role: "paste" },
+          { role: "pasteAndMatchStyle" },
           { role: "selectAll" },
         ],
       },
       {
         label: "表示",
         submenu: [
+          {
+            label: "ページ内を検索…",
+            accelerator: "CmdOrCtrl+F",
+            click: () =>
+              pageActions.openFind(
+                pageActions.focusedContents(current()?.view.webContents),
+              ),
+          },
           {
             label: "URLを入力",
             accelerator: "CmdOrCtrl+L",
@@ -764,6 +818,7 @@ app.whenReady().then(() => {
       if (action !== "state") mutation = false;
     }
   });
+  pageActions = createPageActions(() => win);
   installMenu();
   createWindow();
   app.on("activate", () => {

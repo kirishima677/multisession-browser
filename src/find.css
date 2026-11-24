@@ -1,0 +1,50 @@
+body {
+  margin: 0;
+  padding: 15px;
+  background: #f6f8fd;
+  color: #34435e;
+  font:
+    12px -apple-system,
+    BlinkMacSystemFont,
+    "Hiragino Sans",
+    sans-serif;
+}
+form {
+  display: flex;
+  gap: 6px;
+}
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #d5deef;
+  border-radius: 7px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  outline-color: #6478ff;
+}
+button {
+  border: 1px solid #dbe2ef;
+  border-radius: 6px;
+  background: white;
+  color: #687996;
+  padding: 4px 9px;
+  font-size: 17px;
+  cursor: pointer;
+}
+button:hover {
+  background: #edf1fc;
+}
+.status {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  color: #8793a8;
+  margin-top: 11px;
+}
+#matches {
+  font-size: 10px;
+  color: #5369a2;
+}

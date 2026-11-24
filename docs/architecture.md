@@ -12,7 +12,9 @@ BrowserWindow（管理UI / ローカルHTML）
 - `src/main.js`：ウィンドウ・タブ・Session・IPC・ネイティブメニュー。
 - `src/preload.js`：管理UIだけに公開するIPCブリッジ。
 - `src/tab-layout.js`：タブ順序・分割配置・選択時のペイン置き換え。
-- `src/context-menu.js`：クリック元のWebContentsに対する右クリックメニュー。
+- `src/context-menu.js`：クリック元のWebContentsに対する右クリックメニューと保存対象URLの検証。
+- `src/page-actions.js`：元タブでのダウンロード、Webアーカイブ保存、印刷、ページ内検索窓の管理。
+- `src/find.html` / `find.css` / `find.js` / `find-preload.js`：管理APIを公開しない検索専用ウィンドウ。
 - `src/site-preload.js`：非対応のWebAuthn要求を速やかに終了するサイト用preload。管理APIは公開しない。
 - `src/model.js`：URLと設定の検証、partition識別子、原子的な設定保存。
 - `src/index.html` / `styles.css` / `renderer.js`：ビルド不要の管理画面。
@@ -62,6 +64,14 @@ E2Eは一時ディレクトリを `MSB_USER_DATA` に指定する。通常利用
 - カメラ・マイク等の許可・拒否。
 - エラー証明書の拒否、通信断後の再読み込み。
 - Intel Mac上での起動と表示。
+
+## 保存・印刷・ページ内検索
+
+画像等の保存には、クリック元の `webContents.downloadURL` を使う。session.downloadURLや独自のHTTPクライアントに切り替えず、ブラウザのセッションとオリジンに基づくダウンロード処理を使う。保存先選択はSessionのwill-downloadで設定し、interrupted終了時にはエラーを表示する。
+
+ページ保存はネイティブの保存先ダイアログでパスを選んでから `savePage(..., 'MHTML')` を実行する。処理中に元ページが閉じられた場合は保存を開始しない。印刷は `silent: false` を指定してMacのダイアログを表示し、キャンセルをエラー扱いにしない。
+
+検索窓はWebContentsごとに1つ。専用のローカルHTMLと限定したIPCを使用し、呼び出し元のウィンドウ・メインフレーム・URLを確認する。検索先WebContentsは作成時に固定し、検索窓から任意のタブIDやJavaScriptを指定できない。found-in-pageのrequestIdを照合して件数を反映し、元タブの破棄と連動して検索窓・リスナーを解放する。
 
 ## 配布
 

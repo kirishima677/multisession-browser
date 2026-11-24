@@ -1,6 +1,6 @@
 {
   "name": "multisession-browser",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A macOS testing browser with isolated sessions per tab",
   "private": true,
   "main": "src/main.js",
@@ -10,7 +10,7 @@
     "start": "electron .",
     "test": "node --test test/unit.test.js",
     "test:e2e": "playwright test",
-    "check": "node --check src/main.js && node --check src/model.js && node --check src/tab-layout.js && node --check src/context-menu.js && node --check src/preload.js && node --check src/site-preload.js && node --check src/renderer.js",
+    "check": "node --check src/main.js && node --check src/model.js && node --check src/tab-layout.js && node --check src/context-menu.js && node --check src/preload.js && node --check src/site-preload.js && node --check src/renderer.js && node --check src/page-actions.js && node --check src/find-preload.js && node --check src/find.js",
     "pack:mac": "electron-builder --mac --dir",
     "dist:mac": "electron-builder --mac zip dmg"
   },
