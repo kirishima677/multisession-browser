@@ -760,3 +760,71 @@ dialog .help {
   cursor: grabbing !important;
   user-select: none;
 }
+
+.version-button {
+  padding: 3px 7px;
+  margin-left: 12px;
+  font-size: 10px;
+  color: #7583a4;
+  vertical-align: middle;
+}
+.version-button.has-update {
+  color: #3b7c63;
+  border-color: #84bba3;
+}
+.memory-usage {
+  margin-left: auto;
+  padding: 2px 6px;
+  font-size: 10px;
+  background: transparent;
+  color: #7785a0;
+  border-color: transparent;
+}
+.memory-usage.over-limit {
+  color: #a54b28;
+  background: #fff0dc;
+  border-color: #e5c89b;
+}
+.footer-shortcuts {
+  margin-left: 0;
+}
+.runtime-warning,
+.runtime-notice {
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.runtime-warning {
+  color: #87552b;
+  background: #fff2df;
+  border: 1px solid #edd2a5;
+}
+.runtime-notice {
+  color: #316552;
+  background: #e8f4ed;
+  border: 1px solid #bbd9c9;
+}
+.runtime-warning p {
+  margin: 6px 0;
+}
+.runtime-warning button,
+.runtime-notice button {
+  font-size: 10px;
+  padding: 4px 8px;
+  margin-top: 6px;
+}
+.app-version {
+  font-weight: 650;
+  font-size: 15px;
+}
+#modal-body .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 0 10px;
+}
+#modal-body input[type="checkbox"] {
+  width: auto;
+}

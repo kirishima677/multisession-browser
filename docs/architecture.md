@@ -108,3 +108,17 @@ APIビューには任意サイト用のpartitionやpreloadを使わない。ロ�
 応答・履歴はメモリ内のみ。履歴はタブごとに直近20件。永続化前・複製前・履歴への投入前にstoredDraftを通し、Bearer・認証系ヘッダーを除く。URL・クエリ・本文は利用者が明示保存した定義としてworkspace.jsonへ保存する。API定義の読み込みから送信は行わない。既存のschemaVersion 1はapiRequestsがない場合に空配列として読み込み、既存Web作業セットとの互換性を保つ。
 
 状態通知にrevisionを付け、入力はdraftRevisionが変化した時だけ置き換える。応答の本文・ヘッダーは初回取得と実行完了時だけ送り、普段の状態通知で5 MiBの内容を繰り返しコピーしない。タブを閉じた際は通信を中止し、遅延応答は削除済みタブへ反映しない。
+
+## Ver 0.5.0：CLI・実行状況・更新確認
+
+- `terminal-tabs.js` / `terminal-preload.js` / `terminal.html` / `terminal.js` / `terminal.css`：CLI専用のローカルビューとIPC。管理下のビュー・メインフレーム・正確なローカルURLを検証してから、本人のPTYだけに入力・リサイズ・ACKを許可する。
+- node-ptyはメインプロセス側でログインシェルを起動する。レンダラーにNode.jsは公開せず、xterm.jsのスクリプトとCSSは同梱したnpm依存から読み込む。外部のCDN・WebSocketサーバーは使用しない。
+- PTY出力にはepochとseqを付け、初回バッファとライブ通知の重複を除く。未処理出力が256 KiBを超えたらpause、64 KiB未満でresumeする。再表示用のバッファは128000 UTF-16コード単位、スクロールバックは3000行。
+- `process-tree.js`：Macのps出力からPID・PPID・RSSのみを読み、CLIの子孫を列挙する。停止時は対象ツリーを終了する。シェルから切り離されたプロセスまで追跡する機能ではない。
+- `memory-monitor.js`：Electron app.getAppMetricsのworkingSetSize（KiB）とCLI子孫のRSSを合計し、既出PIDは除く。3秒ごとの非同期計測。共有物理ページの重複は残るため、画面ではRSSの目安と明示する。
+- `runtime-model.js`：設定・CLIの起動フォルダ・安定版の数値比較。旧workspace.jsonには既定設定を補完し、schemaVersion 1の既存Web/APIセットを維持する。
+- `updates.js`：ブラウザSessionを使わないNode HTTP(S)で固定のGitHub Releases APIを確認。10秒タイムアウト・128 KiB上限・自動リダイレクトなし。安定版のx.y.zのみ比較し、外部で開くURLは対象リポジトリのGitHub Releasesだけを許可する。取得結果のコード実行・自動インストールはない。
+
+定期的なメモリ・更新状態はbrowser:runtimeで専用通知する。タブ列・セッション一覧のDOMを定期的に作り直さない。版数はapp.getVersionとprocess.versionsから取得し、表示用の版数を別途ハードコードしない。
+
+node-pty 1.1.0に同梱されたMac用N-APIバイナリを利用するため、electron-builderのnpmRebuildは無効にしている。scripts/prepare-terminal.jsでspawn-helperの実行権限を設定し、node-pty一式はASARの外へ展開する。npm install / start / pack:mac / dist:macで準備する。将来ネイティブ依存を追加・更新する際は、このビルド方針とElectronとの互換性を再検証する。

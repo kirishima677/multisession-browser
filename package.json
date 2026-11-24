@@ -1,6 +1,6 @@
 {
   "name": "multisession-browser",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A macOS testing browser with isolated sessions per tab",
   "private": true,
   "main": "src/main.js",
@@ -10,10 +10,14 @@
     "start": "electron .",
     "test": "node --test test/unit.test.js",
     "test:e2e": "playwright test",
-    "check": "node --check src/main.js && node --check src/model.js && node --check src/tab-layout.js && node --check src/context-menu.js && node --check src/preload.js && node --check src/site-preload.js && node --check src/renderer.js && node --check src/page-actions.js && node --check src/find-preload.js && node --check src/find.js && node --check src/api-request.js && node --check src/api-http.js && node --check src/api-tabs.js && node --check src/api-preload.js && node --check src/api.js",
+    "check": "node --check src/main.js && node --check src/model.js && node --check src/tab-layout.js && node --check src/context-menu.js && node --check src/preload.js && node --check src/site-preload.js && node --check src/renderer.js && node --check src/page-actions.js && node --check src/find-preload.js && node --check src/find.js && node --check src/api-request.js && node --check src/api-http.js && node --check src/api-tabs.js && node --check src/api-preload.js && node --check src/api.js && node --check src/runtime-model.js && node --check src/process-tree.js && node --check src/memory-monitor.js && node --check src/updates.js && node --check src/terminal-tabs.js && node --check src/terminal-preload.js && node --check src/terminal.js",
     "pack:mac": "electron-builder --mac --dir",
     "dist:mac": "electron-builder --mac zip dmg",
-    "icon:mac": "bash scripts/build-icon.sh"
+    "icon:mac": "bash scripts/build-icon.sh",
+    "postinstall": "node scripts/prepare-terminal.js",
+    "prestart": "node scripts/prepare-terminal.js",
+    "prepack:mac": "node scripts/prepare-terminal.js",
+    "predist:mac": "node scripts/prepare-terminal.js"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",
@@ -43,9 +47,18 @@
     },
     "dmg": {
       "title": "Multisession Browser"
-    }
+    },
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ]
   },
   "overrides": {
     "minimatch": "11.0.9"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0"
   }
 }

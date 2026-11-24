@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Local Terminal</title>
+    <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="terminal.css" />
+    <script src="../node_modules/@xterm/xterm/lib/xterm.js" defer></script>
+    <script
+      src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"
+      defer
+    ></script>
+    <script src="terminal.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div><strong>LOCAL TERMINAL</strong><span id="session"></span></div>
+      <div>
+        <button id="directory">起動フォルダ</button
+        ><button id="clear">表示をクリア</button
+        ><button id="start">シェルを起動</button
+        ><button id="stop" hidden>停止</button>
+      </div>
+    </header>
+    <div class="details">
+      <span id="cwd"></span><span id="phase" role="status"></span>
+    </div>
+    <p class="hint">
+      このMacのユーザー権限で実行します。ブラウザのCookieは共有しません。構成復元後のシェル起動は手動です。
+    </p>
+    <p id="terminal-error" role="alert" hidden></p>
+    <main id="terminal" aria-label="ターミナル"></main>
+  </body>
+</html>

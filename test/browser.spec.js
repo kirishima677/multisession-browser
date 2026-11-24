@@ -11,8 +11,18 @@ const testPNG = Buffer.from(
 );
 const imageCookies = [];
 let redirectHits = 0;
+let updateHits = 0;
+let releaseFixture = { status: 404, body: {} };
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
+    if (req.url === "/test-update/latest") {
+      updateHits++;
+      res.writeHead(releaseFixture.status, {
+        "Content-Type": "application/json",
+      });
+      res.end(JSON.stringify(releaseFixture.body));
+      return;
+    }
     if (req.url.startsWith("/test-api/")) {
       const url = new URL(req.url, "http://localhost");
       if (
@@ -121,7 +131,13 @@ async function launch(directory) {
     ...(process.env.MSB_EXECUTABLE
       ? { executablePath: process.env.MSB_EXECUTABLE, args: [] }
       : { args: [path.join(__dirname, "..")] }),
-    env: { ...process.env, MSB_USER_DATA: directory },
+    env: {
+      ...process.env,
+      MSB_USER_DATA: directory,
+      MSB_UPDATE_URL: `${baseURL}/test-update/latest`,
+      SHELL: "/bin/zsh",
+      ZDOTDIR: directory,
+    },
   });
   try {
     await expect
@@ -1890,6 +1906,328 @@ test("API cancellation, timeout, redirects, response caps and HTML responses sta
       )
       .toBe(false);
   } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+async function cliPage(application) {
+  const shell = application
+    .windows()
+    .find((p) => p.url().endsWith("/src/index.html"));
+  const id = (await command(shell, "state")).tabs
+    .filter((t) => t.kind === "terminal")
+    .at(-1).id;
+  let matched;
+  await expect
+    .poll(async () => {
+      for (const page of application
+        .windows()
+        .filter((p) => p.url().endsWith("/src/terminal.html"))) {
+        try {
+          if (
+            (await page.evaluate(() => terminalAPI.invoke("state"))).id === id
+          ) {
+            matched = page;
+            return true;
+          }
+        } catch {}
+      }
+      return false;
+    })
+    .toBe(true);
+  await matched.waitForFunction(
+    () => typeof term !== "undefined" && initialized,
+  );
+  return matched;
+}
+async function terminalText(page) {
+  return page.evaluate(() => {
+    const buffer = term.buffer.active;
+    return Array.from(
+      { length: buffer.length },
+      (_, i) => buffer.getLine(i)?.translateToString(true) || "",
+    ).join("\n");
+  });
+}
+async function typeCLI(page, value) {
+  await page.locator(".xterm-helper-textarea").focus();
+  await page.keyboard.type(value);
+  await page.keyboard.press("Enter");
+}
+test("CLI tabs run an interactive PTY, resize, split, restore without executing and stop child processes", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-cli-"));
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    await shell.getByRole("button", { name: "＋ CLI", exact: true }).click();
+    await shell
+      .getByRole("button", { name: "タブを開く", exact: true })
+      .click();
+    let cli = await cliPage(application);
+    await expect
+      .poll(
+        async () =>
+          (await cli.evaluate(() => terminalAPI.invoke("state"))).phase,
+      )
+      .toBe("running");
+    expect(
+      await cli.evaluate(() => [
+        typeof require,
+        typeof browserAPI,
+        typeof apiClient,
+      ]),
+    ).toEqual(["undefined", "undefined", "undefined"]);
+    await expect.poll(() => terminalText(cli)).toMatch(/%\s/);
+    const sampled = await command(shell, "sample-memory");
+    expect(sampled.memory.cliProcesses).toBeGreaterThan(0);
+    await typeCLI(cli, 'printf "PTY_RESULT_%s\\n" "$((6*7))"');
+    await expect.poll(() => terminalText(cli)).toContain("PTY_RESULT_42");
+    await typeCLI(cli, 'printf "TTY_RESULT_%s\\n" "$(test -t 0 && echo yes)"');
+    await expect.poll(() => terminalText(cli)).toContain("TTY_RESULT_yes");
+    const shellPID = (await cli.evaluate(() => terminalAPI.invoke("state")))
+      .pid;
+    await typeCLI(cli, "sleep 30");
+    const childPIDs = () =>
+      require("node:child_process")
+        .execFileSync("/bin/ps", ["-axo", "pid=,ppid="], { encoding: "utf8" })
+        .trim()
+        .split("\n")
+        .map((line) => line.trim().split(/\s+/).map(Number))
+        .filter(([, ppid]) => ppid === shellPID)
+        .map(([pid]) => pid);
+    await expect.poll(() => childPIDs().length).toBeGreaterThan(0);
+    await cli.keyboard.press("Control+c");
+    await expect.poll(() => childPIDs().length).toBe(0);
+    await typeCLI(cli, 'printf "INTERRUPTED_%s\\n" ok');
+    await expect.poll(() => terminalText(cli)).toContain("INTERRUPTED_ok");
+    const state = await command(shell, "state");
+    const cliID = state.tabs.find((t) => t.kind === "terminal").id;
+    await command(shell, "create-tab", {
+      sessionId: state.sessions[0].id,
+      url: `${baseURL}/cli-split`,
+    });
+    await site(application, "/cli-split");
+    await command(shell, "split-tab", { id: cliID, side: "right" });
+    expect(
+      (await nativeViews(application)).views.filter((v) => v.visible),
+    ).toHaveLength(2);
+    await expect.poll(() => cli.evaluate(() => term.cols)).toBeLessThan(100);
+    const cols = await cli.evaluate(() => term.cols);
+    await typeCLI(
+      cli,
+      'printf "COLS_RESULT_%s\\n" "$(stty size | awk \'{print $2}\')"',
+    );
+    await expect.poll(() => terminalText(cli)).toContain(`COLS_RESULT_${cols}`);
+    await shell.getByRole("button", { name: /構成を保存/ }).click();
+    await shell
+      .getByLabel("作業セット名", { exact: true })
+      .fill("CLI workspace");
+    await shell
+      .getByRole("button", { name: "作業セットを保存", exact: true })
+      .click();
+    let config = JSON.parse(
+      fs.readFileSync(path.join(directory, "workspace.json"), "utf8"),
+    );
+    const id = config.worksets[0].id;
+    expect(config.worksets[0].tabs.some((t) => t.kind === "terminal")).toBe(
+      true,
+    );
+    expect(
+      fs.readFileSync(path.join(directory, "workspace.json"), "utf8"),
+    ).not.toContain("PTY_RESULT");
+    await shell.getByRole("button", { name: /構成を保存/ }).click();
+    await shell.getByLabel("保存方法").selectOption("overwrite");
+    await shell.getByLabel("上書きする構成").selectOption(id);
+    await shell
+      .getByLabel("作業セット名", { exact: true })
+      .fill("CLI workspace updated");
+    await shell
+      .getByRole("button", { name: "作業セットを保存", exact: true })
+      .click();
+    config = JSON.parse(
+      fs.readFileSync(path.join(directory, "workspace.json"), "utf8"),
+    );
+    expect(config.worksets).toHaveLength(1);
+    expect(config.worksets[0].id).toBe(id);
+    expect(config.worksets[0].name).toBe("CLI workspace updated");
+    await command(shell, "restore-workset", { id });
+    cli = await cliPage(application);
+    expect((await cli.evaluate(() => terminalAPI.invoke("state"))).phase).toBe(
+      "idle",
+    );
+    await expect(
+      cli.getByRole("button", { name: "シェルを起動", exact: true }),
+    ).toBeVisible();
+    await command(shell, "select-tab", {
+      id: (await cli.evaluate(() => terminalAPI.invoke("state"))).id,
+    });
+    await cli
+      .getByRole("button", { name: "シェルを起動", exact: true })
+      .click();
+    await expect
+      .poll(
+        async () =>
+          (await cli.evaluate(() => terminalAPI.invoke("state"))).phase,
+      )
+      .toBe("running");
+    await expect.poll(() => terminalText(cli)).toMatch(/%\s/);
+    await typeCLI(cli, "/bin/sleep 30 & echo CHILD_PID:$!");
+    await expect.poll(() => terminalText(cli)).toMatch(/CHILD_PID:\d+/);
+    const childPID = Number(
+      (await terminalText(cli)).match(/CHILD_PID:(\d+)/)[1],
+    );
+    const live = await cli.evaluate(() => terminalAPI.invoke("state"));
+    await cli.screenshot({ path: "test-results/terminal.png" });
+    await command(shell, "close-tab", { id: live.id });
+    await expect
+      .poll(() => {
+        try {
+          process.kill(childPID, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(false);
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("running version, memory totals, warning dismissal and preferences are visible and persist", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-runtime-"));
+  let application;
+  try {
+    let launched = await launch(directory);
+    application = launched.application;
+    let shell = launched.shell;
+    const state = await command(shell, "sample-memory");
+    expect(state.appInfo.version).toBe("0.5.0");
+    expect(state.memory.bytes).toBeGreaterThan(0);
+    await expect(shell.locator("#app-info")).toHaveText("v0.5.0");
+    await application.evaluate(({ app }) => {
+      app.getAppMetrics = () => [
+        { pid: process.pid, memory: { workingSetSize: 3 * 1024 * 1024 } },
+      ];
+    });
+    await command(shell, "sample-memory");
+    await expect(shell.locator("#memory-warning")).toBeVisible();
+    await expect(shell.locator("#memory-usage")).toContainText("3.00 GiB");
+    await shell
+      .getByRole("button", { name: "今回の警告を閉じる", exact: true })
+      .click();
+    await command(shell, "sample-memory");
+    await expect(shell.locator("#memory-warning")).toBeHidden();
+    await application.evaluate(({ app }) => {
+      app.getAppMetrics = () => [
+        { pid: process.pid, memory: { workingSetSize: 100 * 1024 } },
+      ];
+    });
+    await command(shell, "sample-memory");
+    await application.evaluate(({ app }) => {
+      app.getAppMetrics = () => [
+        { pid: process.pid, memory: { workingSetSize: 3 * 1024 * 1024 } },
+      ];
+    });
+    await command(shell, "sample-memory");
+    await expect(shell.locator("#memory-warning")).toBeVisible();
+    await shell.locator("#app-info").click();
+    await expect(
+      shell.getByText("Multisession Browser v0.5.0", { exact: true }),
+    ).toBeVisible();
+    await shell
+      .getByLabel("メモリ警告（MiB、0で無効）", { exact: true })
+      .fill("0");
+    await shell
+      .getByLabel("起動時にアップデートを確認する", { exact: true })
+      .uncheck();
+    await shell
+      .getByRole("button", { name: "設定を保存", exact: true })
+      .click();
+    await command(shell, "sample-memory");
+    await expect(shell.locator("#memory-warning")).toBeHidden();
+    await application.close();
+    application = null;
+    const previousHits = updateHits;
+    launched = await launch(directory);
+    application = launched.application;
+    shell = launched.shell;
+    const restored = await command(shell, "state");
+    expect(restored.preferences).toEqual({
+      memoryWarningMiB: 0,
+      checkUpdatesOnStartup: false,
+    });
+    expect(restored.update.status).toBe("idle");
+    expect(updateHits).toBe(previousHits);
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("startup and manual updates compare GitHub releases and show failures without blocking browsing", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-update-"));
+  let application;
+  const url =
+    "https://github.com/kirishima677/multisession-browser/releases/tag/v0.6.0";
+  releaseFixture = {
+    status: 200,
+    body: {
+      tag_name: "v0.6.0",
+      html_url: url,
+      draft: false,
+      prerelease: false,
+    },
+  };
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    await expect(shell.locator("#update-notice")).toBeVisible();
+    await expect(shell.locator("#app-info")).toHaveText("v0.5.0");
+    await application.evaluate(({ shell }) => {
+      globalThis.openedRelease = "";
+      shell.openExternal = async (url) => {
+        globalThis.openedRelease = url;
+      };
+    });
+    await shell.locator("#open-update").click();
+    expect(await application.evaluate(() => globalThis.openedRelease)).toBe(
+      url,
+    );
+    await shell.locator("#app-info").click();
+    releaseFixture.body.tag_name = "v0.5.0";
+    await shell
+      .getByRole("button", { name: "今すぐ更新を確認", exact: true })
+      .click();
+    await expect(shell.locator("#update-message")).toContainText(
+      "起動中のバージョンは最新",
+    );
+    releaseFixture = { status: 503, body: {} };
+    await shell
+      .getByRole("button", { name: "今すぐ更新を確認", exact: true })
+      .click();
+    await expect(shell.locator("#update-message")).toContainText(
+      "更新を確認できませんでした",
+    );
+    releaseFixture = { status: 404, body: {} };
+    await shell
+      .getByRole("button", { name: "今すぐ更新を確認", exact: true })
+      .click();
+    await expect(shell.locator("#update-message")).toContainText(
+      "公開済みのリリースがありません",
+    );
+    await shell
+      .getByRole("button", { name: "キャンセル", exact: true })
+      .click();
+    await command(shell, "navigate", { url: `${baseURL}/update-browsing` });
+    await site(application, "/update-browsing");
+  } finally {
+    releaseFixture = { status: 404, body: {} };
     if (application) await application.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }

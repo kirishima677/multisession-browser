@@ -2,6 +2,7 @@ const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { draft: apiDraft, storedDraft } = require("./api-request");
+const { preferences, terminalDefinition } = require("./runtime-model");
 
 const COLORS = [
   "#6478ff",
@@ -93,6 +94,7 @@ function defaults() {
     ),
     worksets: [],
     apiRequests: [],
+    preferences: preferences(),
   };
 }
 function validateConfig(data) {
@@ -104,6 +106,7 @@ function validateConfig(data) {
     !data.sessions.length
   )
     throw new Error("設定ファイルの形式が不正です。");
+  data.preferences = preferences(data.preferences);
   const ids = new Set();
   for (const s of data.sessions) {
     if (
@@ -125,7 +128,7 @@ function validateConfig(data) {
     for (const t of w.tabs) {
       if (!ids.has(t.sessionId))
         throw new Error("作業セットのセッションが見つかりません。");
-      if (t.kind && !["web", "api"].includes(t.kind))
+      if (t.kind && !["web", "api", "terminal"].includes(t.kind))
         throw new Error("タブの種類が不正です。");
       if (t.kind === "api") {
         apiDraft(t.request);
@@ -134,7 +137,8 @@ function validateConfig(data) {
           storedDraft(t.request).headers !== t.request.headers
         )
           throw new Error("APIの保存設定に認証情報は含められません。");
-      } else normalizeURL(t.url);
+      } else if (t.kind === "terminal") terminalDefinition(t.terminal);
+      else normalizeURL(t.url);
     }
   }
   if (data.apiRequests === undefined) data.apiRequests = [];

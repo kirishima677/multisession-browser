@@ -186,6 +186,7 @@ function render(next) {
   );
   renderTabs();
   renderSplit();
+  renderRuntime();
   const worksets = state.worksets.map((w) => {
     const row = el("div", "workset-item");
     const open = button(
@@ -225,9 +226,15 @@ function render(next) {
       active?.url === "about:blank" ? "" : active?.url || "";
   addressTabId = state.activeId;
   $("#address-dot").style.setProperty("--color", profile?.color || "#6478ff");
-  $("#address").readOnly = active?.kind === "api";
+  $("#address").readOnly = ["api", "terminal"].includes(active?.kind);
+  $("#open-as").disabled = active?.kind === "terminal";
+  $("#reload").disabled = active?.kind === "terminal";
   $("#address").title =
-    active?.kind === "api" ? "APIタブ内のURL欄で編集します（⌘L）" : "";
+    active?.kind === "api"
+      ? "APIタブ内のURL欄で編集します（⌘L）"
+      : active?.kind === "terminal"
+        ? "ターミナルの起動フォルダ"
+        : "";
   $("#back").disabled = !active?.canGoBack;
   $("#forward").disabled = !active?.canGoForward;
   $("#auth-notice").hidden = !active?.authNotice;
@@ -399,6 +406,7 @@ function newTabModal(copyURL = false, initialKind = "web") {
         for (const [value, text] of [
           ["web", "Webページ"],
           ["api", "APIクライアント"],
+          ["terminal", "CLI・ターミナル"],
         ]) {
           const option = el("option", "", text);
           option.value = value;
@@ -426,32 +434,176 @@ function newTabModal(copyURL = false, initialKind = "web") {
             sessionId: select.value,
           })
         : invoke(
-            !copyURL && kindSelect.value === "api"
-              ? "create-api-tab"
-              : "create-tab",
+            !copyURL && kindSelect.value === "terminal"
+              ? "create-terminal-tab"
+              : !copyURL && kindSelect.value === "api"
+                ? "create-api-tab"
+                : "create-tab",
             {
               sessionId: select.value,
-              ...(!copyURL && kindSelect.value === "api" ? {} : { url }),
+              ...(!copyURL && ["api", "terminal"].includes(kindSelect.value)
+                ? {}
+                : { url }),
             },
           ),
   );
 }
 function saveWorksetModal() {
-  let name;
+  let name, mode, existing;
   showModal(
     "タブ構成を保存",
     "作業セットを保存",
     (body) => {
+      const caption = el("label", "", "保存方法");
+      caption.htmlFor = "save-mode";
+      mode = el("select");
+      mode.id = "save-mode";
+      for (const [value, text] of [
+        ["new", "新規追加"],
+        ["overwrite", "既存の構成を上書き"],
+      ]) {
+        const option = el("option", "", text);
+        option.value = value;
+        option.disabled = value === "overwrite" && !state.worksets.length;
+        mode.append(option);
+      }
+      const targetLabel = el("label", "", "上書きする構成");
+      targetLabel.htmlFor = "save-target";
+      existing = el("select");
+      existing.id = "save-target";
+      for (const w of state.worksets) {
+        const option = el("option", "", w.name);
+        option.value = w.id;
+        existing.append(option);
+      }
+      body.append(caption, mode, targetLabel, existing);
       name = field(body, "作業セット名", "", "例：メッセージ機能テスト");
+      const update = () => {
+        const overwrite = mode.value === "overwrite";
+        targetLabel.hidden = existing.hidden = !overwrite;
+        if (overwrite)
+          name.value =
+            state.worksets.find((w) => w.id === existing.value)?.name || "";
+      };
+      mode.addEventListener("change", update);
+      existing.addEventListener("change", update);
+      update();
       body.append(
         el(
           "p",
           "help",
-          `${state.tabs.length}個のタブのURL・順番・セッションを保存します。APIタブはBearerと認証系ヘッダーを除く定義も保存します。URLや本文の機密値は保存対象です。Webページの入力内容と通信履歴は保存しません。`,
+          `${state.tabs.length}個のタブの順番・セッション・WebのURL・API定義・CLIの起動フォルダを保存します。Bearerと認証系ヘッダーは除外します。URLや本文の機密値は保存対象です。CLIの入力・出力は保存せず、復元後の起動は手動です。`,
         ),
       );
     },
-    () => invoke("save-workset", { name: name.value }),
+    () =>
+      invoke("save-workset", {
+        name: name.value,
+        ...(mode.value === "overwrite" ? { id: existing.value } : {}),
+      }),
+  );
+}
+function formatMemory(bytes) {
+  return bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(2)} GiB`
+    : `${Math.round(bytes / 1024 ** 2)} MiB`;
+}
+function renderRuntime() {
+  if (!state?.appInfo) return;
+  $("#app-info").textContent = `v${state.appInfo.version}`;
+  const m = state.memory,
+    limit = state.preferences.memoryWarningMiB;
+  $("#memory-usage").textContent = m?.sampledAt
+    ? `${m.warning ? "⚠ " : ""}メモリ ${formatMemory(m.bytes)}`
+    : "メモリ計測中…";
+  $("#memory-usage").classList.toggle("over-limit", Boolean(m?.warning));
+  $("#memory-usage").title =
+    m?.error ||
+    `アプリ＋CLIの子プロセスのRSS合計（共有メモリの重複を含む目安）。警告：${limit ? limit + " MiB" : "無効"}。クリックで設定`;
+  $("#memory-warning").hidden = !m?.warning || m.dismissed;
+  $("#memory-warning-text").textContent = m?.sampledAt
+    ? `${formatMemory(m.bytes)} / 警告値 ${limit} MiB。不要なタブやCLIのプロセスを閉じるか、設定を変更できます。`
+    : "";
+  const update = state.update;
+  $("#update-notice").hidden = update?.status !== "available";
+  $("#update-notice-text").textContent = update?.message || "";
+  $("#app-info").classList.toggle("has-update", update?.status === "available");
+  if ($("#runtime-memory"))
+    $("#runtime-memory").textContent = m?.sampledAt
+      ? `RSS合計の目安：${formatMemory(m.bytes)} / ${m.processes}プロセス（CLI ${m.cliProcesses}）。約3秒ごとに更新。共有メモリの重複を含むため、アクティビティモニタの表示とは異なります。${m.error}`
+      : "計測中…";
+  if ($("#update-message"))
+    $("#update-message").textContent =
+      `${update?.message || ""}${update?.checkedAt ? " 最終確認：" + new Date(update.checkedAt).toLocaleString() : ""}`;
+  if ($("#check-updates"))
+    $("#check-updates").disabled = update?.status === "checking";
+  if ($("#settings-open-update"))
+    $("#settings-open-update").hidden = !update?.url;
+}
+function appInfoModal() {
+  let memory, startup;
+  showModal(
+    "アプリ情報・設定",
+    "設定を保存",
+    (body) => {
+      body.append(
+        el(
+          "p",
+          "app-version",
+          `Multisession Browser v${state.appInfo.version}`,
+        ),
+        el(
+          "p",
+          "help",
+          `Electron ${state.appInfo.electron} / Chromium ${state.appInfo.chromium} / macOS ${state.appInfo.arch}`,
+        ),
+      );
+      const measured = el("p", "help");
+      measured.id = "runtime-memory";
+      body.append(measured);
+      memory = field(
+        body,
+        "メモリ警告（MiB、0で無効）",
+        String(state.preferences.memoryWarningMiB),
+      );
+      memory.type = "number";
+      memory.min = "0";
+      memory.max = "65536";
+      const caption = el("label", "checkbox-label");
+      startup = el("input");
+      startup.type = "checkbox";
+      startup.checked = state.preferences.checkUpdatesOnStartup;
+      startup.id = "startup-update";
+      caption.append(
+        startup,
+        document.createTextNode("起動時にアップデートを確認する"),
+      );
+      body.append(caption);
+      const message = el("p", "help");
+      message.id = "update-message";
+      const check = button("今すぐ更新を確認", "", () =>
+        invoke("check-updates"),
+      );
+      check.id = "check-updates";
+      const open = button("リリースを開く", "", () => invoke("open-update"));
+      open.id = "settings-open-update";
+      body.append(
+        message,
+        check,
+        open,
+        el(
+          "p",
+          "help",
+          "GitHub Releasesの安定版と比較します。更新のダウンロード・置き換えは手動です。",
+        ),
+      );
+      renderRuntime();
+    },
+    () =>
+      invoke("set-preferences", {
+        memoryWarningMiB: Number(memory.value),
+        checkUpdatesOnStartup: startup.checked,
+      }),
   );
 }
 function focusAddress() {
@@ -470,6 +622,15 @@ $("#back").addEventListener("click", () => invoke("back"));
 $("#forward").addEventListener("click", () => invoke("forward"));
 $("#reload").addEventListener("click", () => invoke("reload"));
 $("#devtools").addEventListener("click", () => invoke("devtools"));
+$("#new-terminal").addEventListener("click", () =>
+  newTabModal(false, "terminal"),
+);
+$("#app-info").addEventListener("click", appInfoModal);
+$("#memory-usage").addEventListener("click", appInfoModal);
+$("#dismiss-memory-warning").addEventListener("click", () =>
+  invoke("dismiss-memory-warning"),
+);
+$("#open-update").addEventListener("click", () => invoke("open-update"));
 $("#new-api").addEventListener("click", () => newTabModal(false, "api"));
 $("#open-as").addEventListener("click", () => newTabModal(true));
 $("#add-session").addEventListener("click", () => sessionModal());
@@ -498,8 +659,16 @@ api.onShortcut((name) => {
   if ($("#modal").open) return;
   if (name === "address") focusAddress();
   if (name === "new-tab") newTabModal();
+  if (name === "new-terminal-tab") newTabModal(false, "terminal");
+  if (name === "app-info") appInfoModal();
   if (name === "new-api-tab") newTabModal(false, "api");
   if (name === "save-workset") saveWorksetModal();
+});
+api.onRuntime((value) => {
+  if (state) {
+    state = { ...state, ...value };
+    renderRuntime();
+  }
 });
 invoke("state");
 

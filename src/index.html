@@ -15,13 +15,25 @@
     <header class="titlebar">
       <div class="brand">
         Multisession <strong>Browser</strong
-        ><span class="badge">TEST WORKSPACE</span>
+        ><span class="badge">TEST WORKSPACE</span
+        ><button id="app-info" class="version-button" title="アプリ情報・設定">
+          バージョン
+        </button>
       </div>
       <button id="save-workset" class="subtle">
         構成を保存 <kbd>⌘⇧S</kbd>
       </button>
     </header>
     <aside class="sidebar">
+      <div id="memory-warning" class="runtime-warning" role="alert" hidden>
+        <strong>メモリ使用量が設定値を超えました</strong>
+        <p id="memory-warning-text"></p>
+        <button id="dismiss-memory-warning">今回の警告を閉じる</button>
+      </div>
+      <div id="update-notice" class="runtime-notice" role="status" hidden>
+        <strong id="update-notice-text"></strong
+        ><button id="open-update">リリースを開く</button>
+      </div>
       <div class="section-heading">
         SESSIONS
         <button
@@ -67,6 +79,9 @@
           placeholder="URLまたは検索キーワード（⌘L）"
         />
       </form>
+      <button id="new-terminal" title="新しいターミナルタブを開く">
+        ＋ CLI
+      </button>
       <button id="new-api" title="新しいAPIタブを開く">＋ API</button>
       <button id="open-as" title="このURLを別のセッションで開く">
         別セッション
@@ -135,6 +150,12 @@
     <div id="tab-drag-ghost" class="tab-drag-ghost" hidden></div>
     <footer>
       <span id="status"></span><span id="error" role="status"></span
+      ><button
+        id="memory-usage"
+        class="memory-usage"
+        title="メモリ使用量・警告設定"
+      >
+        メモリ計測中…</button
       ><span class="footer-shortcuts"
         >新しいタブ ⌘T <span>·</span> DevTools ⌘⌥I</span
       >

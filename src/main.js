@@ -8,6 +8,7 @@ const {
   Menu,
   clipboard,
   nativeImage,
+  shell,
 } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -15,6 +16,10 @@ const { randomUUID } = require("node:crypto");
 const { contextMenuTemplate } = require("./context-menu");
 const { createPageActions } = require("./page-actions");
 const { createApiTabs } = require("./api-tabs");
+const { createTerminalTabs } = require("./terminal-tabs");
+const { createMemoryMonitor } = require("./memory-monitor");
+const { createUpdateChecker } = require("./updates");
+const { preferences } = require("./runtime-model");
 const { reorderIds, splitForDrop, selectInSplit } = require("./tab-layout");
 const {
   COLORS,
@@ -36,6 +41,7 @@ const runId = randomUUID();
 let stateRevision = 0;
 let pageActions;
 let apiTabs;
+let terminalTabs, memoryMonitor, updateChecker;
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
 const appIconPath = path.join(__dirname, "..", "assets", "icon.png");
 const sitePreload = path.join(__dirname, "site-preload.js");
@@ -76,6 +82,7 @@ function state() {
     sessions: config.sessions,
     worksets: config.worksets,
     colors: COLORS,
+    ...runtime(),
     activeId,
     split,
     draggingTab,
@@ -87,17 +94,38 @@ function state() {
       url:
         t.kind === "api"
           ? t.request.url || "about:blank"
-          : t.view.webContents.getURL() || "about:blank",
+          : t.kind === "terminal"
+            ? t.terminal.cwd
+            : t.view.webContents.getURL() || "about:blank",
       loading:
         t.kind === "api" ? Boolean(t.apiJob) : t.view.webContents.isLoading(),
       error: t.error || "",
       authNotice: Boolean(t.authNotice),
       canGoBack:
-        t.kind !== "api" && t.view.webContents.navigationHistory.canGoBack(),
+        !["api", "terminal"].includes(t.kind) &&
+        t.view.webContents.navigationHistory.canGoBack(),
       canGoForward:
-        t.kind !== "api" && t.view.webContents.navigationHistory.canGoForward(),
+        !["api", "terminal"].includes(t.kind) &&
+        t.view.webContents.navigationHistory.canGoForward(),
     })),
   };
+}
+function runtime() {
+  return {
+    appInfo: {
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      chromium: process.versions.chrome,
+      arch: process.arch,
+    },
+    preferences: config.preferences,
+    memory: memoryMonitor?.get() || null,
+    update: updateChecker?.get() || null,
+  };
+}
+function publishRuntime() {
+  if (win && !win.isDestroyed())
+    win.webContents.send("browser:runtime", runtime());
 }
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send("browser:state", state());
@@ -331,6 +359,7 @@ function closeTab(id, ensure = true) {
   win.contentView.removeChildView(t.view);
   tabs.delete(id);
   if (t.kind === "api") apiTabs.cancel(t);
+  if (t.kind === "terminal") terminalTabs.stop(t);
   t.view.webContents.close({ waitForBeforeUnload: false });
   if (activeId === id) activeId = [...tabs.keys()].at(-1);
   if (ensure && !tabs.size) createTab(config.sessions[0].id);
@@ -363,6 +392,7 @@ function installContextMenu(contents, profile) {
     const template = contextMenuTemplate(contents, params, {
       clipboard,
       nativeImage,
+      shell,
       browserPage: Boolean(profile),
       openTab: profile ? (url) => createTab(profile.id, url) : undefined,
       download: profile
@@ -441,6 +471,7 @@ async function resetSession(id, remove) {
   }
   persist();
   apiTabs.refresh();
+  terminalTabs.refresh();
   if (!tabs.size) createTab((remove ? config.sessions[0] : profile).id);
 }
 async function command(action, p = {}) {
@@ -453,6 +484,32 @@ async function command(action, p = {}) {
       if (overlay) draggingTab = false;
       layout();
       break;
+    case "create-terminal-tab":
+      terminalTabs.create(
+        p.sessionId || current()?.sessionId || config.sessions[0].id,
+        p.terminal,
+      );
+      break;
+    case "set-preferences":
+      config.preferences = preferences(p);
+      persist();
+      memoryMonitor.reset();
+      break;
+    case "dismiss-memory-warning":
+      memoryMonitor.dismiss();
+      break;
+    case "sample-memory":
+      await memoryMonitor.sample();
+      break;
+    case "check-updates":
+      updateChecker.check();
+      break;
+    case "open-update": {
+      const url = updateChecker.openURL();
+      if (!url) throw new Error("公開リリースが見つかりません。");
+      await shell.openExternal(url);
+      break;
+    }
     case "create-api-tab":
       apiTabs.create(
         p.sessionId || current()?.sessionId || config.sessions[0].id,
@@ -508,8 +565,8 @@ async function command(action, p = {}) {
       break;
     case "navigate": {
       const t = current();
-      if (t?.kind === "api")
-        throw new Error("APIタブ内のURL欄を編集してください。");
+      if (["api", "terminal"].includes(t?.kind))
+        throw new Error("このタブでは上部のURL欄から移動できません。");
       const url = resolveAddressInput(p.url);
       if (t) {
         t.error = "";
@@ -526,7 +583,7 @@ async function command(action, p = {}) {
         current().view.webContents.navigationHistory.goForward();
       break;
     case "reload":
-      current()?.view.webContents.reload();
+      if (current()?.kind !== "terminal") current()?.view.webContents.reload();
       break;
     case "dismiss-auth-notice":
       if (current()) current().authNotice = false;
@@ -540,6 +597,7 @@ async function command(action, p = {}) {
       config.sessions.push(s);
       persist();
       apiTabs.refresh();
+      terminalTabs.refresh();
       createTab(s.id);
       break;
     }
@@ -551,6 +609,7 @@ async function command(action, p = {}) {
       s.color = p.color;
       persist();
       apiTabs.refresh();
+      terminalTabs.refresh();
       break;
     }
     case "reset-session":
@@ -561,18 +620,32 @@ async function command(action, p = {}) {
       break;
     case "save-workset": {
       const name = label(p.name);
-      config.worksets.push({
-        id: randomUUID(),
+      const definition = {
+        id: p.id || randomUUID(),
         name,
         tabs: [...tabs.values()].map((t) =>
           t.kind === "api"
             ? apiTabs.serialize(t)
-            : {
-                sessionId: t.sessionId,
-                url: normalizeURL(t.view.webContents.getURL()),
-              },
+            : t.kind === "terminal"
+              ? terminalTabs.serialize(t)
+              : {
+                  sessionId: t.sessionId,
+                  url: normalizeURL(t.view.webContents.getURL()),
+                },
         ),
-      });
+      };
+      if (p.id) {
+        const index = config.worksets.findIndex((w) => w.id === p.id);
+        if (index < 0) throw new Error("上書きする構成が見つかりません。");
+        if (
+          !(await confirm(
+            `「${config.worksets[index].name}」を上書きしますか？`,
+            "保存済みのタブ構成を現在の構成に置き換えます。",
+          ))
+        )
+          break;
+        config.worksets[index] = definition;
+      } else config.worksets.push(definition);
       persist();
       break;
     }
@@ -582,7 +655,7 @@ async function command(action, p = {}) {
       if (
         !(await confirm(
           `「${w.name}」を開きますか？`,
-          "現在のタブを閉じ、保存した構成を開きます。入力途中の内容は失われます。ログイン状態は初期化しません。一時セッションは新しい状態で開きます。",
+          "現在のタブを閉じ、保存した構成を開きます。入力途中の内容は失われます。ターミナルのプロセスも終了します。ログイン状態は初期化しません。一時セッションは新しい状態で開きます。",
         ))
       )
         break;
@@ -600,6 +673,8 @@ async function command(action, p = {}) {
       }
       for (const t of w.tabs) {
         if (t.kind === "api") apiTabs.create(t.sessionId, t.request);
+        else if (t.kind === "terminal")
+          terminalTabs.create(t.sessionId, t.terminal, false);
         else createTab(t.sessionId, t.url);
       }
       activeId = [...tabs.keys()][0];
@@ -628,6 +703,10 @@ function shortcut(name) {
   if (!win || win.isDestroyed()) return;
   win.show();
   win.focus();
+  if (name === "address" && current()?.kind === "terminal") {
+    current().view.webContents.focus();
+    return;
+  }
   if (name === "address" && current()?.kind === "api") {
     current().view.webContents.focus();
     current().view.webContents.send("api-client:focus-url");
@@ -668,7 +747,10 @@ function installKeyboard(contents) {
       action = () => shortcut("save-workset");
     if (input.alt && !input.shift && key === "i") action = devtools;
     if (!input.alt && !input.shift && key === "r")
-      action = () => current()?.view.webContents.reload();
+      action = () => {
+        if (current()?.kind !== "terminal")
+          current()?.view.webContents.reload();
+      };
     if (!input.alt && !input.shift && key === "w")
       action = () => {
         const child = BrowserWindow.fromWebContents(contents);
@@ -687,7 +769,14 @@ function installMenu() {
       {
         label: app.name,
         submenu: [
-          { role: "about" },
+          { label: "アプリ情報・設定…", click: () => shortcut("app-info") },
+          {
+            label: "アップデートを確認…",
+            click: () => {
+              shortcut("app-info");
+              updateChecker.check();
+            },
+          },
           { type: "separator" },
           { role: "services" },
           { type: "separator" },
@@ -701,6 +790,11 @@ function installMenu() {
       {
         label: "ファイル",
         submenu: [
+          {
+            label: "新しいターミナルタブ",
+            accelerator: "CmdOrCtrl+Alt+J",
+            click: () => shortcut("new-terminal-tab"),
+          },
           {
             label: "新しいAPIタブ",
             accelerator: "CmdOrCtrl+Alt+T",
@@ -769,7 +863,10 @@ function installMenu() {
           {
             label: "再読み込み",
             accelerator: "CmdOrCtrl+R",
-            click: () => current()?.view.webContents.reload(),
+            click: () => {
+              if (current()?.kind !== "terminal")
+                current()?.view.webContents.reload();
+            },
           },
           {
             label: "DevTools",
@@ -806,6 +903,7 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.on("resize", layout);
   win.on("closed", () => {
+    terminalTabs.shutdown();
     for (const t of tabs.values())
       if (!t.view.webContents.isDestroyed())
         t.view.webContents.close({ waitForBeforeUnload: false });
@@ -887,12 +985,41 @@ app.whenReady().then(() => {
     installContextMenu,
     securePreferences,
   });
+  terminalTabs = createTerminalTabs({
+    tabs,
+    window: () => win,
+    profileFor,
+    activate: activateTab,
+    layout,
+    publish,
+    installKeyboard,
+    installContextMenu,
+    securePreferences,
+  });
+  memoryMonitor = createMemoryMonitor({
+    app,
+    terminalPids: terminalTabs.pids,
+    threshold: () => config.preferences.memoryWarningMiB,
+    publish: publishRuntime,
+  });
+  updateChecker = createUpdateChecker({
+    version: app.getVersion(),
+    publish: publishRuntime,
+    url: process.env.MSB_UPDATE_URL || undefined,
+  });
   installMenu();
   createWindow();
+  memoryMonitor.start();
+  if (config.preferences.checkUpdatesOnStartup) updateChecker.check();
   app.on("activate", () => {
     if (!win) createWindow();
   });
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  terminalTabs?.shutdown();
+  memoryMonitor?.stop();
 });
