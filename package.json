@@ -1,6 +1,6 @@
 {
   "name": "multisession-browser",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A macOS testing browser with isolated sessions per tab",
   "private": true,
   "main": "src/main.js",
@@ -12,7 +12,8 @@
     "test:e2e": "playwright test",
     "check": "node --check src/main.js && node --check src/model.js && node --check src/tab-layout.js && node --check src/context-menu.js && node --check src/preload.js && node --check src/site-preload.js && node --check src/renderer.js && node --check src/page-actions.js && node --check src/find-preload.js && node --check src/find.js",
     "pack:mac": "electron-builder --mac --dir",
-    "dist:mac": "electron-builder --mac zip dmg"
+    "dist:mac": "electron-builder --mac zip dmg",
+    "icon:mac": "bash scripts/build-icon.sh"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",
@@ -27,6 +28,7 @@
     },
     "files": [
       "src/**/*",
+      "assets/icon.png",
       "package.json"
     ],
     "mac": {
@@ -36,7 +38,8 @@
         "dmg"
       ],
       "hardenedRuntime": true,
-      "identity": null
+      "identity": null,
+      "icon": "assets/icon.icns"
     },
     "dmg": {
       "title": "Multisession Browser"

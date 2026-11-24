@@ -7,6 +7,7 @@ const {
   dialog,
   Menu,
   clipboard,
+  nativeImage,
 } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -34,6 +35,7 @@ const runId = randomUUID();
 let stateRevision = 0;
 let pageActions;
 const chrome = { sidebar: 236, top: 152, bottom: 28 };
+const appIconPath = path.join(__dirname, "..", "assets", "icon.png");
 const sitePreload = path.join(__dirname, "site-preload.js");
 const shellURL = pathToFileURL(path.join(__dirname, "index.html")).href;
 let win,
@@ -350,6 +352,7 @@ function installContextMenu(contents, profile) {
   contents.on("context-menu", (_event, params) => {
     const template = contextMenuTemplate(contents, params, {
       clipboard,
+      nativeImage,
       browserPage: Boolean(profile),
       openTab: profile ? (url) => createTab(profile.id, url) : undefined,
       download: profile
@@ -742,6 +745,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     title: app.name,
+    icon: appIconPath,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 20 },
     backgroundColor: "#f5f6fa",
@@ -778,6 +782,10 @@ app.on("second-instance", () => {
 });
 app.whenReady().then(() => {
   if (!primaryInstance) return;
+  if (process.platform === "darwin") {
+    const icon = nativeImage.createFromPath(appIconPath);
+    if (!icon.isEmpty()) app.dock?.setIcon(icon);
+  }
   store = new ConfigStore(app.getPath("userData"));
   try {
     config = store.load();

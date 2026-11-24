@@ -82,7 +82,7 @@ npm run dist:mac
 
 Apple Siliconでは `dist/mac-arm64/Multisession Browser.app`、Intelでは通常 `dist/mac/Multisession Browser.app` に生成します。
 
-今回生成したVer 0.3.0は、旧版を残すため `dist/v0.3.0/mac-arm64/Multisession Browser.app` に配置しています。利用中の旧版を `⌘Q` で終了してから開いてください。保存セッションと作業セットは引き続き使用します。
+今回生成したVer 0.3.1は、旧版を残すため `dist/v0.3.1/mac-arm64/Multisession Browser.app` に配置しています。利用中の旧版を `⌘Q` で終了してから開いてください。保存セッションと作業セットは引き続き使用します。
 
 別のCPUを指定する場合：
 
@@ -92,6 +92,22 @@ npm run dist:mac -- --x64
 ```
 
 初期設定はDeveloper ID署名・公証なしのローカル開発向けです。配布用の署名・公証は別途設定してください。Intel向けの実機動作は未検証です。
+
+## アプリのアイコン
+
+Ver 0.3.1から、重なったブラウザと青・緑の2ペインをモチーフにした専用アイコンを使います。MacアプリのDock・Finderに設定し、`npm start` でも起動後のDockに反映します。
+
+- `assets/icon.png`：1024pxの透過PNG。起動中のDock表示に使用。
+- `assets/icon.icns`：16〜1024pxの標準サイズを含むMac用アイコン。ビルドに使用。
+- `assets/icon-source-clean.png`：採用した生成元画像。
+- `assets/icon-prompts.md`：内蔵ImageGenの制作プロンプト。
+
+元画像を変更して再変換するには、macOSで実行してください。
+
+```sh
+npm run icon:mac
+npm run pack:mac
+```
 
 ## ショートカット
 

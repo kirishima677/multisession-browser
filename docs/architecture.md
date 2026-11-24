@@ -73,6 +73,12 @@ E2Eは一時ディレクトリを `MSB_USER_DATA` に指定する。通常利用
 
 検索窓はWebContentsごとに1つ。専用のローカルHTMLと限定したIPCを使用し、呼び出し元のウィンドウ・メインフレーム・URLを確認する。検索先WebContentsは作成時に固定し、検索窓から任意のタブIDやJavaScriptを指定できない。found-in-pageのrequestIdを照合して件数を反映し、元タブの破棄と連動して検索窓・リスナーを解放する。
 
+## アプリアイコン
+
+`assets/icon.png` をアプリ内に同梱し、macOSのready後にapp.dock.setIconで設定する。パッケージ版の起動前・Finder表示にはelectron-builderのmac.iconに指定した `assets/icon.icns` を使う。
+
+`scripts/build-icon.sh` は生成元PNGをsipsで1024pxの基準画像と各標準サイズへ変換し、iconutilでICNSを作成する。画像のデザイン変更は生成元を更新し、派生PNG/ICNSを再生成してからビルドする。
+
 ## 配布
 
 electron-builderでmacOS向け `.app` / ZIP / DMGを作成する。ローカル開発ビルドはDeveloper ID署名・公証なし。正式配布では自分のApple Developerアカウントによる署名と公証を設定する。

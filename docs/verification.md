@@ -1,5 +1,22 @@
 # 検証記録
 
+## Ver 0.3.1（2026-11-24）
+
+macOS 26.6.2 / Apple Silicon環境で実施。アイコンのみの変更に合わせ、形式・パッケージ・起動を確認。
+
+- `npm run icon:mac`：1024pxの透過PNGとICNSを生成。
+- iconutilでICNSを展開し、16〜1024pxの標準10サイズを確認。
+- `npm run check`：成功。
+- `dist/v0.3.1/mac-arm64/Multisession Browser.app` の生成：成功。
+- Info.plistのCFBundleIconFileがicon.icnsを指すことを確認。
+- アプリに同梱されたICNSとassets/icon.icnsのSHA-256が一致。
+- 起動完了後のスモーク確認：version 0.3.1、packaged true、PNGの読み込み成功、1024×1024、隅のalphaが0、Dock表示が有効。
+- 既存E2Eのセッション分離・保存復元等を含む1ケース：成功。
+- `git diff --check`：成功。
+
+デザインは内蔵ImageGenで生成。元画像・制作プロンプトをassets/に保存し、PNG/ICNSへのサイズ・形式変換はmacOSのsips/iconutilを使用。
+
+
 ## Ver 0.3.0（2026-11-24）
 
 macOS 26.6.2 / Apple Silicon環境で実施。
