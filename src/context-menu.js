@@ -30,6 +30,7 @@ function contextMenuTemplate(
     inspect,
     download,
     savePage,
+    savePDF,
     printPage,
     findPage,
     onError = () => {},
@@ -173,6 +174,8 @@ function contextMenuTemplate(
         savePage,
         Boolean(pageURL(contents.getURL())),
       );
+    if (savePDF)
+      add("save-pdf", "PDFとして保存…", savePDF, Boolean(pageURL(contents.getURL())));
     if (printPage) add("print-page", "印刷…", printPage);
     separator();
     add("inspect", "要素を検証", () => inspect(contents, params.x, params.y));

@@ -1,10 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs/promises");
+const { randomUUID } = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 const { downloadableURL } = require("./context-menu");
 
 function createPageActions(getMainWindow) {
   const finders = new Map();
+  const pdfJobs = new Set();
   const findURL = pathToFileURL(path.join(__dirname, "find.html")).href;
   const owner = (contents) =>
     (contents && !contents.isDestroyed()
@@ -185,6 +188,48 @@ function createPageActions(getMainWindow) {
       },
     );
   }
+  async function savePDF(contents) {
+    if (!contents || contents.isDestroyed() || pdfJobs.has(contents.id)) return;
+    const id = contents.id;
+    const url = contents.getURL();
+    if (!downloadableURL(url))
+      throw new Error("HTTP / HTTPSのWebページをPDFとして保存できます。");
+    pdfJobs.add(id);
+    try {
+      const title = (contents.getTitle() || "page")
+        .replace(/[\\/:*?"<>|\x00-\x1f]/g, "_")
+        .slice(0, 100);
+      const result = await dialog.showSaveDialog(owner(contents), {
+        title: "PDFとして保存",
+        defaultPath: path.join(app.getPath("downloads"), `${title}.pdf`),
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+        properties: ["showOverwriteConfirmation"],
+      });
+      if (result.canceled || !result.filePath || contents.isDestroyed()) return;
+      if (contents.getURL() !== url)
+        throw new Error("保存元のページが移動しました。もう一度PDF保存を選んでください。");
+      const data = await contents.printToPDF({
+        pageSize: "A4",
+        printBackground: true,
+        preferCSSPageSize: true,
+      });
+      if (contents.isDestroyed()) return;
+      if (contents.getURL() !== url)
+        throw new Error("保存元のページが移動しました。もう一度PDF保存を選んでください。");
+      const temporary = path.join(
+        path.dirname(result.filePath),
+        `.msb-pdf-${randomUUID()}.tmp`,
+      );
+      try {
+        await fs.writeFile(temporary, data, { flag: "wx", mode: 0o600 });
+        await fs.rename(temporary, result.filePath);
+      } finally {
+        await fs.rm(temporary, { force: true }).catch(() => {});
+      }
+    } finally {
+      pdfJobs.delete(id);
+    }
+  }
   function download(contents, url, kind) {
     if (!downloadableURL(url, kind))
       throw new Error("このリソースは保存できません。");
@@ -199,6 +244,6 @@ function createPageActions(getMainWindow) {
     if (focused && focused !== getMainWindow()) return focused.webContents;
     return fallback;
   }
-  return { openFind, savePage, printPage, download, report, focusedContents };
+  return { openFind, savePage, savePDF, printPage, download, report, focusedContents };
 }
 module.exports = { createPageActions };

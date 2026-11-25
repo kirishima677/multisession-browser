@@ -924,6 +924,7 @@ test("browser menu exposes history and bookmarks and disables page-only actions 
     false,
   );
   assert.equal(items.find((i) => i.id === "save-page").enabled, false);
+  assert.equal(items.find((i) => i.id === "save-pdf").enabled, false);
   assert.equal(
     items.find((i) => i.id === "page-zoom").submenu[0].enabled,
     false,

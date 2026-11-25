@@ -148,3 +148,11 @@ scripts/secure-build.jsをafterPackで呼び、Cookie暗号化fuseを有効化�
 - `library-window.js` / `library-preload.js` / `library.html` / `library.js` / `library.css`は専用の一覧・編集画面。IPCは管理下の正確なローカルURLとメインフレームだけ認可し、browserAPI・Node・CLIのAPIは渡さない。外部遷移・直接通信をCSPとイベントで拒否する。
 - 状態通知にrevision、検索応答に呼び出し番号を使って古い結果を無視する。行DOMを項目IDごとに再利用し、更新通知中のクリック先を保持する。名前とURLはtextContentで表示する。
 - 管理画面のブックマークダイアログは最新のメイン側pageDetailsを取得する。現在のWebタブと登録セッションを確認して保存し、アドレス欄の「☆/★」は選択中タブの状態から更新する。
+
+## Ver 0.7.2：PDF保存
+
+`page-actions.js` の `savePDF` を、ブラウザメニューとサイト用コンテキストメニューから呼ぶ。両方ともクリック元のWebContentsを渡し、保存ダイアログ後に選択中タブを取り直さない。API/CLI・管理用ビューには保存経路を公開しない。
+
+HTTP(S)のURLを確認してからネイティブ保存ダイアログを開く。ダイアログ後とPDF生成後に、元のWebContentsの生存とURLの一致を確認する。生成はChromiumの `printToPDF`（A4、背景あり、CSS用紙指定優先）で行い、外部からページを取り直さない。
+
+完成したBufferを保存先と同じディレクトリのUUID付き一時ファイルへ0600・排他的作成で書き込み、renameで置き換える。短い一時ファイル名を使い、長い保存名にも対応する。一時ファイルと同一ページの多重実行フラグはfinallyで解放する。

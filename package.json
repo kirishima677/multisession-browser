@@ -1,6 +1,6 @@
 {
   "name": "multisession-browser",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "A macOS testing browser with isolated sessions per tab",
   "private": true,
   "main": "src/main.js",

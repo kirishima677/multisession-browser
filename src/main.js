@@ -175,6 +175,7 @@ function showBrowserMenu(p = {}) {
       zoom: (direction) => safe(() => zoomPage(direction))(),
       find: safe(() => pageActions.openFind(contents)),
       save: safe(() => pageActions.savePage(contents)),
+      savePDF: safe(() => pageActions.savePDF(contents)),
       print: safe(() => pageActions.printPage(contents)),
       fullscreen: () => win.setFullScreen(!win.isFullScreen()),
       tools: (page) => safe(() => command("open-test-tools", { page }))(),
@@ -532,6 +533,7 @@ function installContextMenu(contents, profile) {
         ? (url, kind) => pageActions.download(contents, url, kind)
         : undefined,
       savePage: profile ? () => pageActions.savePage(contents) : undefined,
+      savePDF: profile ? () => pageActions.savePDF(contents) : undefined,
       printPage: profile ? () => pageActions.printPage(contents) : undefined,
       findPage: profile
         ? (query) => pageActions.openFind(contents, query)

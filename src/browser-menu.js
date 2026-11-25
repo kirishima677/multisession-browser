@@ -94,6 +94,7 @@ function browserMenuTemplate(state, actions) {
     },
     item("find-page", "ページ内を検索…", actions.find, state.webPage),
     item("save-page", "ページを保存…", actions.save, state.webPage),
+    item("save-pdf", "PDFとして保存…", actions.savePDF, state.webPage),
     item("print-page", "印刷…", actions.print, state.webPage),
     item("fullscreen", "全画面表示を切り替え", actions.fullscreen),
     { type: "separator" },
