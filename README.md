@@ -227,6 +227,8 @@ npm run dist:mac -- --x64
 
 初期設定はDeveloper ID署名・公証なしのローカル開発向けです。配布用の署名・公証は別途設定してください。Intel向けの実機動作は未検証です。
 
+再ビルド後もキーチェーンから同じアプリとして識別される構成にする場合は、[ローカル署名とキーチェーン継続許可の手順](docs/macos-local-signing.md)を参照してください。
+
 ## アプリのアイコン
 
 Ver 0.3.1から、重なったブラウザと青・緑の2ペインをモチーフにした専用アイコンを使います。MacアプリのDock・Finderに設定し、`npm start` でも起動後のDockに反映します。
@@ -322,5 +324,6 @@ ElectronのmacOSネイティブパスキーにはコード署名・provisioning 
 - [初期仕様](docs/specification.md)
 - [構成と開発上の注意](docs/architecture.md)
 - [検証記録](docs/verification.md)
+- [ローカル署名とキーチェーン継続許可](docs/macos-local-signing.md)
 
 - [変更履歴](CHANGELOG.md)
