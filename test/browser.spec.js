@@ -3,6 +3,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const appVersion = require("../package.json").version;
 
 let server, baseURL;
 const testPNG = Buffer.from(
@@ -435,6 +436,61 @@ test("macOS browser isolates sessions, shares tabs, persists logins, resets and 
     await expect(
       reopened.getByRole("heading", { name: /それぞれのユーザーで/ }),
     ).toBeVisible();
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("address focus selects the URL while later clicks and dragging allow editing", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-address-focus-"));
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    const url = `${baseURL}/address-selection?value=keep-this-text`;
+    await command(shell, "navigate", { url });
+    await site(application, "/address-selection?value=keep-this-text");
+    const address = shell.locator("#address");
+    await expect(address).toHaveValue(url);
+    const selection = () => address.evaluate(input => ({
+      start: input.selectionStart, end: input.selectionEnd,
+    }));
+    const position = { x: 100, y: (await address.boundingBox()).height / 2 };
+    await address.evaluate(input => input.blur());
+    await address.click({ position });
+    expect(await selection()).toEqual({ start: 0, end: url.length });
+    await address.click({ position });
+    const caret = await selection();
+    expect(caret.start).toBe(caret.end);
+    await expect(address).toHaveValue(url);
+
+    await address.evaluate(input => input.blur());
+    const bounds = await address.boundingBox();
+    await shell.mouse.move(bounds.x + 70, bounds.y + bounds.height / 2);
+    await shell.mouse.down();
+    await shell.mouse.move(bounds.x + 150, bounds.y + bounds.height / 2, { steps: 10 });
+    await shell.mouse.up();
+    const range = await selection();
+    expect(range.end - range.start).toBeGreaterThan(0);
+    expect(range.end - range.start).toBeLessThan(url.length);
+
+    await shell.locator("#reload").focus();
+    await shell.keyboard.press("Tab");
+    await expect(address).toBeFocused();
+    expect(await selection()).toEqual({ start: 0, end: url.length });
+    await application.evaluate(({ webContents }) => {
+      const host = webContents.getAllWebContents().find(c => c.getURL().endsWith("/src/index.html"));
+      host.focus();
+      host.sendInputEvent({ type: "keyDown", keyCode: "L", modifiers: ["meta"] });
+      host.sendInputEvent({ type: "keyUp", keyCode: "L", modifiers: ["meta"] });
+    });
+    await expect(address).toBeFocused();
+    expect(await selection()).toEqual({ start: 0, end: url.length });
+    await address.fill(`${url}&edited=yes`);
+    await command(shell, "sample-memory");
+    await expect(address).toHaveValue(`${url}&edited=yes`);
   } finally {
     if (application) await application.close();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -1769,6 +1825,91 @@ test("API tabs use fixed browser sessions for Cookie, no-auth and Bearer request
   }
 });
 
+test("API method changes show the relevant editor and preserve drafts and POST query parameters", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-api-editors-"));
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    await command(shell, "create-api-tab", { sessionId: (await command(shell, "state")).sessions[0].id });
+    const page = await apiPage(application);
+    const method = page.locator("#method");
+    const params = page.locator("#params");
+    const body = page.locator("#body");
+    await expect(method).toHaveValue("GET");
+    await expect(params).toBeVisible();
+    await expect(body).toBeHidden();
+    await expect(page.locator("[data-panel='body']")).toBeHidden();
+    await page.locator("#url").fill(`${baseURL}/test-api/echo`);
+    await page.locator("#name").fill("Method editor fixture");
+    await params.fill("q=日本語 & test\ntag=kept");
+
+    await method.selectOption("POST");
+    await expect(body).toBeVisible();
+    await expect(params).toBeHidden();
+    await expect(page.locator("[data-panel='body']")).toHaveClass("selected");
+    await body.fill("{unfinished JSON");
+    await method.selectOption("GET");
+    await expect(params).toBeVisible();
+    await expect(body).toBeHidden();
+    await expect(body).toBeDisabled();
+    await expect(params).toHaveValue("q=日本語 & test\ntag=kept");
+    await page.locator("#send").click();
+    await expect.poll(async () => (await apiCommand(page, "state")).history.length).toBe(1);
+    let result = (await apiCommand(page, "state")).response;
+    expect(result.method).toBe("GET");
+    let echo = JSON.parse(result.body);
+    expect(echo.body).toBe("");
+    expect(echo.query).toContainEqual(["q", "日本語 & test"]);
+
+    await method.selectOption("POST");
+    await expect(body).toBeVisible();
+    await expect(body).toHaveValue("{unfinished JSON");
+    await body.fill('{"message":"preserved body"}');
+    await page.locator("#bodyType").selectOption("text");
+    await method.selectOption("GET");
+    await expect(body).toBeHidden();
+    await method.selectOption("POST");
+    await expect(body).toHaveValue('{"message":"preserved body"}');
+    await expect(page.locator("#bodyType")).toHaveValue("text");
+    await page.locator("#bodyType").selectOption("json");
+    await page.locator("[data-panel='params']").click();
+    await expect(params).toBeVisible();
+    await expect(body).toBeHidden();
+    await expect(params).toHaveValue("q=日本語 & test\ntag=kept");
+    await page.locator("[data-panel='headers']").click();
+    await page.locator("#headers").fill("X-Editor-Test: kept");
+    await expect(page.locator("#headers")).toBeVisible();
+    await apiCommand(page, "state");
+    await expect(page.locator("#headers")).toBeVisible();
+    await page.locator("#send").click();
+    await expect.poll(async () => (await apiCommand(page, "state")).history.length).toBe(2);
+    result = (await apiCommand(page, "state")).response;
+    expect(result.method).toBe("POST");
+    echo = JSON.parse(result.body);
+    expect(JSON.parse(echo.body)).toEqual({ message: "preserved body" });
+    expect(echo.query).toContainEqual(["q", "日本語 & test"]);
+    await page.locator("#save").click();
+    await expect.poll(async () => (await apiCommand(page, "state")).saved.length).toBe(1);
+    const saved = (await apiCommand(page, "state")).saved[0];
+    await method.selectOption("HEAD");
+    await expect(params).toBeVisible();
+    await expect(body).toBeHidden();
+    await page.locator("#saved").selectOption(saved.id);
+    await page.locator("#load-saved").click();
+    await expect(method).toHaveValue("POST");
+    await expect(body).toBeVisible();
+    await expect(body).toHaveValue('{"message":"preserved body"}');
+    await expect(params).toHaveValue("q=日本語 & test\ntag=kept");
+    expect((await apiCommand(page, "state")).history.length).toBe(2);
+    await page.screenshot({ path: "test-results/api-method-editors.png" });
+  } finally {
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("API UI sends JSON, saves requests without credentials and restores API worksets after restart", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "msb-api-save-"));
   let application;
@@ -2162,9 +2303,9 @@ test("running version, memory totals, warning dismissal and preferences are visi
     application = launched.application;
     let shell = launched.shell;
     const state = await command(shell, "sample-memory");
-    expect(state.appInfo.version).toBe("0.7.0");
+    expect(state.appInfo.version).toBe(appVersion);
     expect(state.memory.bytes).toBeGreaterThan(0);
-    await expect(shell.locator("#app-info")).toHaveText("v0.7.0");
+    await expect(shell.locator("#app-info")).toHaveText(`v${appVersion}`);
     await application.evaluate(({ app }) => {
       app.getAppMetrics = () => [
         { pid: process.pid, memory: { workingSetSize: 3 * 1024 * 1024 } },
@@ -2193,7 +2334,7 @@ test("running version, memory totals, warning dismissal and preferences are visi
     await expect(shell.locator("#memory-warning")).toBeVisible();
     await shell.locator("#app-info").click();
     await expect(
-      shell.getByText("Multisession Browser v0.7.0", { exact: true }),
+      shell.getByText(`Multisession Browser v${appVersion}`, { exact: true }),
     ).toBeVisible();
     await shell
       .getByLabel("メモリ警告（MiB、0で無効）", { exact: true })
@@ -2244,7 +2385,7 @@ test("startup and manual updates compare GitHub releases and show failures witho
     application = launched.application;
     const shell = launched.shell;
     await expect(shell.locator("#update-notice")).toBeVisible();
-    await expect(shell.locator("#app-info")).toHaveText("v0.7.0");
+    await expect(shell.locator("#app-info")).toHaveText(`v${appVersion}`);
     await application.evaluate(({ shell }) => {
       globalThis.openedRelease = "";
       shell.openExternal = async (url) => {
@@ -2256,7 +2397,7 @@ test("startup and manual updates compare GitHub releases and show failures witho
       url,
     );
     await shell.locator("#app-info").click();
-    releaseFixture.body.tag_name = "v0.7.0";
+    releaseFixture.body.tag_name = `v${appVersion}`;
     await shell
       .getByRole("button", { name: "今すぐ更新を確認", exact: true })
       .click();

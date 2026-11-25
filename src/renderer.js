@@ -699,6 +699,30 @@ function focusAddress() {
   $("#address").focus();
   $("#address").select();
 }
+const address = $("#address");
+let addressPress;
+address.addEventListener("pointerdown", (event) => {
+  addressPress =
+    event.button === 0 && document.activeElement !== address
+      ? { x: event.clientX, y: event.clientY }
+      : null;
+});
+address.addEventListener("focus", () => address.select());
+address.addEventListener("mouseup", (event) => {
+  if (
+    addressPress &&
+    Math.hypot(event.clientX - addressPress.x, event.clientY - addressPress.y) < 4
+  ) {
+    // The first click's default caret placement follows focus selection.
+    event.preventDefault();
+    address.select();
+  }
+  addressPress = null;
+});
+for (const event of ["blur", "pointercancel"])
+  address.addEventListener(event, () => {
+    addressPress = null;
+  });
 $("#address-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const result = await invoke("navigate", { url: $("#address").value });

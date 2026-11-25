@@ -2,6 +2,7 @@ const api = window.apiClient;
 const $ = (selector) => document.querySelector(selector);
 let state,
   appliedDraftRevision,
+  editorMethod,
   responseMode = "pretty",
   requestPanel = "params";
 const fieldNames = [
@@ -151,12 +152,26 @@ function formatBytes(bytes) {
       ? `${(bytes / 1024).toFixed(1)} KiB`
       : `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
 }
+function selectRequestPanel(name) {
+  requestPanel = name;
+  for (const tab of document.querySelectorAll("[data-panel]"))
+    tab.classList.toggle("selected", tab.dataset.panel === name);
+  for (const panel of document.querySelectorAll(".editor-panel"))
+    panel.hidden = panel.id !== `panel-${name}`;
+}
 function updateEditor() {
-  const noBody =
-    ["GET", "HEAD"].includes($("#method").value) ||
-    $("#bodyType").value === "none";
+  const method = $("#method").value;
+  const bodyless = ["GET", "HEAD"].includes(method);
+  if (method !== editorMethod) {
+    editorMethod = method;
+    if (bodyless) selectRequestPanel("params");
+    else if (method === "POST") selectRequestPanel("body");
+  }
+  $("[data-panel='body']").hidden = bodyless;
+  if (bodyless && requestPanel === "body") selectRequestPanel("params");
+  const noBody = bodyless || $("#bodyType").value === "none";
   $("#body").disabled = Boolean(state?.running) || noBody;
-  $("#body-help").textContent = ["GET", "HEAD"].includes($("#method").value)
+  $("#body-help").textContent = bodyless
     ? "GET / HEADでは本文を送信しません。"
     : "本文の上限は1 MiBです。JSONは送信前に形式を検証します。";
   $("#bearer-row").hidden = $("#auth").value !== "bearer";
@@ -202,11 +217,7 @@ for (const name of [...fieldNames, "timeout"])
   });
 for (const button of document.querySelectorAll("[data-panel]"))
   button.addEventListener("click", () => {
-    requestPanel = button.dataset.panel;
-    for (const tab of document.querySelectorAll("[data-panel]"))
-      tab.classList.toggle("selected", tab === button);
-    for (const panel of document.querySelectorAll(".editor-panel"))
-      panel.hidden = panel.id !== `panel-${requestPanel}`;
+    selectRequestPanel(button.dataset.panel);
   });
 for (const button of document.querySelectorAll("[data-response]"))
   button.addEventListener("click", () => {
