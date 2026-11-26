@@ -1253,13 +1253,20 @@ test("an older IPC snapshot cannot roll back tab, pane or address selection", as
     await command(shell, "select-tab", { id: right.id });
     await assertSelection(shell, right.id);
     // Simulate a delayed invoke response arriving after a newer focus notification.
-    const after = await shell.evaluate((old) => {
-      render(old);
-      return {
-        active: document.querySelector("#tabs .tab.active")?.dataset.tabId,
-        address: document.querySelector("#address").value,
-      };
+    await application.evaluate(({ BrowserWindow }, old) => {
+      const owner = BrowserWindow.getAllWindows().find((w) =>
+        w.webContents.getURL().endsWith("/src/index.html"),
+      );
+      owner.webContents.send("browser:state", old);
     }, old);
+    // Wait for IPC delivery and rendering before checking for a rollback.
+    await shell.evaluate(() => new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    ));
+    const after = await shell.evaluate(() => ({
+      active: document.querySelector("#tabs .tab.active")?.dataset.tabId,
+      address: document.querySelector("#address").value,
+    }));
     expect(after.active).toBe(right.id);
     expect(after.address).toBe(right.url);
     await assertSelection(shell, right.id);
@@ -3443,6 +3450,84 @@ test("closing a mixed workspace cancels API traffic, stops its CLI and closes po
     );
   } finally {
     server.removeListener("request", observe);
+    if (application) await application.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("renderer modules keep dialog drafts across page and runtime updates and recover from validation errors", async () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "msb-renderer-dialogs-"),
+  );
+  let application;
+  try {
+    const launched = await launch(directory);
+    application = launched.application;
+    const shell = launched.shell;
+    const errors = [];
+    shell.on("pageerror", (error) => errors.push(error.message));
+    await command(shell, "navigate", { url: `${baseURL}/dialog-background` });
+    const page = await site(application, "/dialog-background");
+    const initial = await command(shell, "state");
+    await shell.locator("#app-info").click();
+    const memory = shell.getByLabel("メモリ警告（MiB、0で無効）", {
+      exact: true,
+    });
+    await memory.fill("1234");
+    await page.evaluate(() => {
+      document.title = "Background update while editing";
+    });
+    await expect(shell.locator("#tabs")).toContainText(
+      "Background update while editing",
+    );
+    await application.evaluate(({ app }) => {
+      app.getAppMetrics = () => [
+        { pid: process.pid, memory: { workingSetSize: 123 * 1024 } },
+      ];
+    });
+    await command(shell, "sample-memory");
+    await expect(shell.locator("#runtime-memory")).toContainText("123 MiB");
+    await expect(memory).toHaveValue("1234");
+    await expect(shell.locator("#modal")).toBeVisible();
+    await shell
+      .locator("#modal")
+      .screenshot({ path: "test-results/renderer-settings-dialog.png" });
+    await shell.locator("#modal-cancel").click();
+    await expect(shell.locator("#modal")).not.toBeVisible();
+    expect((await command(shell, "state")).preferences).toEqual(
+      initial.preferences,
+    );
+
+    await shell.locator("#add-session").click();
+    const name = shell.getByLabel("セッション名", { exact: true });
+    await name.fill("  ");
+    await shell.locator("#modal-submit").click();
+    await expect(shell.locator("#modal-error")).toContainText(
+      "名前は1〜80文字",
+    );
+    await expect(shell.locator("#modal-submit")).toBeEnabled();
+    await expect(shell.locator("#modal")).toBeVisible();
+    await name.fill("Draft survives state updates");
+    await shell.locator(".color-option").nth(1).click();
+    await command(shell, "sample-memory");
+    await expect(name).toHaveValue("Draft survives state updates");
+    await expect(shell.locator(".color-option").nth(1)).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await shell.locator("#modal-submit").click();
+    await expect(shell.locator("#modal")).not.toBeVisible();
+    const state = await command(shell, "state");
+    const created = state.sessions.find(
+      (s) => s.name === "Draft survives state updates",
+    );
+    expect(created.color).toBe(state.colors[1]);
+    expect(state.tabs.find((t) => t.id === state.activeId).sessionId).toBe(
+      created.id,
+    );
+    expect(state.sessions).toHaveLength(initial.sessions.length + 1);
+    expect(errors).toEqual([]);
+  } finally {
     if (application) await application.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }

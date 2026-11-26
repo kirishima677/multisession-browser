@@ -225,7 +225,7 @@ npm run dist:mac
 
 Apple Siliconでは `dist/mac-arm64/Multisession Browser.app`、Intelでは通常 `dist/mac/Multisession Browser.app` に生成します。
 
-今回生成したVer 0.7.3は、旧版を残すため `dist/v0.7.3/mac-arm64/Multisession Browser.app` に配置しています。利用中の旧版を `⌘Q` で終了してから開いてください。保存セッションと作業セットは引き続き使用します。
+今回生成したVer 0.7.4は、旧版を残すため `dist/v0.7.4/mac-arm64/Multisession Browser.app` に配置しています。利用中の旧版を `⌘Q` で終了してから開いてください。保存セッションと作業セットは引き続き使用します。
 
 別のCPUを指定する場合：
 

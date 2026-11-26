@@ -23,7 +23,13 @@ BrowserWindow（管理UI / ローカルHTML）
 - `src/find.html` / `find.css` / `find.js` / `find-preload.js`：管理APIを公開しない検索専用ウィンドウ。
 - `src/site-preload.js`：非対応のWebAuthn要求を速やかに終了するサイト用preload。管理APIは公開しない。
 - `src/model.js`：URLと設定の検証、partition識別子、原子的な設定保存。
-- `src/index.html` / `styles.css` / `renderer.js`：ビルド不要の管理画面。
+- `src/index.html` / `styles.css`：管理画面の構造と見た目。
+- `src/renderer.js`：管理UIのモジュール組み立て、操作受付、IPC購読、描画順序。
+- `src/ui/state.mjs`：全体スナップショットのrevision判定、部分的なruntime通知、UIエラー。
+- `src/ui/tab-view.mjs` / `tab-drag.mjs`：タブと分割見出しのDOM再利用、選択、ドラッグとキャンセル。
+- `src/ui/modal.mjs` / `dialogs.mjs`：共通ダイアログの開閉・送信、セッション・新規タブ・構成保存・設定・ブックマークの入力。
+- `src/ui/runtime-view.mjs`：メモリ・更新・暗号化・認証情報等の表示。
+- `src/ui/shell-view.mjs` / `dom.mjs`：セッション・作業セット一覧、URL欄と状態表示、共通DOM部品。
 - `test/unit.test.js`：URL・partition・設定ファイルの検証。
 - `test/browser.spec.js`：実Electronとローカルサーバーでの統合テスト。
 
@@ -176,3 +182,17 @@ worksetsは保存定義の生成と確認後の操作順を担当する。Web/AP
 browser-ipcは管理ウィンドウの同一WebContents、メインフレーム、正確なローカルURLをすべて検証する。処理中でもstateの取得を許可し、それ以外の同時操作は従来どおり拒否する。ネイティブメニューからの内部呼び出しとの経路の違いも維持する。
 
 この整理ではrenderer、各機能専用IPC／preload、protection、auth-manager、保存形式を変更しない。平文の保持期間を短くする設計変更は別途検討する。
+
+## Ver 0.7.4：管理画面のモジュールと更新順序
+
+index.htmlはrenderer.jsをtype="module"で読み込み、ChromiumのES Modulesローダーからsrc/ui配下のローカル.mjsをimportする。package.jsonのtypeは変更せず、メインプロセスとpreloadのCommonJSも維持する。追加のnpm依存・バンドラー・ネットワーク取得は不要。CSP、Node.js非公開、contextIsolation、sandboxの設定は変更しない。[Electronのrenderer ESM仕様](https://www.electronjs.org/docs/latest/tutorial/esm#renderer-process)
+
+createUIStateで受信した全体状態を一か所に保持し、前のrevisionより古い通知を拒否する。同じrevisionの再描画はドラッグ完了時のDOM整理に必要なため許可する。runtime通知は状態を部分更新し、タブ・選択・分割・revisionを保つ。入力や画面の操作ハンドラーへはgetStateを渡し、作成時の古いスナップショットをクロージャに閉じ込めない。
+
+描画順は従来どおり、セッション一覧→タブ→分割表示→runtime→作業セット一覧→URL欄等とする。定期的なruntime更新ではruntimeの表示だけを更新し、タブ列やダイアログを作り直さない。invokeの結果と購読通知は同じrevision判定を通す。
+
+タブと分割見出しのDOM／Mapはtab-viewが所有する。tab-dragはpointer capture、ドラッグ候補、直後のクリック抑止、完了・取消を所有し、DOMの一時クラス解除をtab-viewへ依頼する。状態更新中も同じタブDOMを再利用し、ドラッグ中や終了直後の選択を維持する。
+
+modalは共通の開閉、overlay通知、送信ボタンの再有効化を担当する。dialogsは入力内容と送信する操作を定義し、現在の画面状態を参照する。設定等の入力要素は背景のページ更新やruntime通知で置き換えない。入力エラーではダイアログを残し、修正して再送信できる。
+
+既存の遅延通知テストは、グローバルrender関数を直接呼ぶ代わりに、実際のbrowser:state通知経路から古いスナップショットを送る。テスト専用の関数を管理画面や閲覧ページへ公開しない。renderer.jsは993行から116行へ整理し、新規8モジュールの構文チェックも既存コマンドに含める。
