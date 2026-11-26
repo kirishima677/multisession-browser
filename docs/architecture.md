@@ -9,7 +9,13 @@ BrowserWindow（管理UI / ローカルHTML）
             └─ 一時：msb-<起動ID>-<世代>-<UUID>
 ```
 
-- `src/main.js`：ウィンドウ・タブ・Session・IPC・ネイティブメニュー。
+- `src/main.js`：起動・終了、管理ウィンドウ、機能モジュールの組み立て、状態通知。
+- `src/browser-workspace.js`：タブのMap、選択・分割・ドラッグ中の状態、Webビューとポップアップ、配置、終了処理。
+- `src/browser-sessions.js`：Session取得、partition初期設定、サイト権限とダウンロード設定、セッション作成・編集・初期化・削除、一時領域の世代。
+- `src/worksets.js`：構成の保存・上書き・削除・復元。復元時は既存ビューを閉じ、一時領域を更新してから保存順に開く。
+- `src/browser-commands.js`：既存の管理操作名を、機能ごとのサービスへ振り分ける。
+- `src/browser-ipc.js`：管理ウィンドウ・メインフレーム・URLの認可と操作の排他制御。
+- `src/browser-controls.js`：ブラウザメニュー、右クリック、アプリメニュー、ショートカット、DevTools、ズーム。
 - `src/preload.js`：管理UIだけに公開するIPCブリッジ。
 - `src/tab-layout.js`：タブ順序・分割配置・選択時のペイン置き換え。
 - `src/context-menu.js`：クリック元のWebContentsに対する右クリックメニューと保存対象URLの検証。
@@ -156,3 +162,17 @@ scripts/secure-build.jsをafterPackで呼び、Cookie暗号化fuseを有効化�
 HTTP(S)のURLを確認してからネイティブ保存ダイアログを開く。ダイアログ後とPDF生成後に、元のWebContentsの生存とURLの一致を確認する。生成はChromiumの `printToPDF`（A4、背景あり、CSS用紙指定優先）で行い、外部からページを取り直さない。
 
 完成したBufferを保存先と同じディレクトリのUUID付き一時ファイルへ0600・排他的作成で書き込み、renameで置き換える。短い一時ファイル名を使い、長い保存名にも対応する。一時ファイルと同一ページの多重実行フラグはfinallyで解放する。
+
+## Ver 0.7.3：メインプロセスの責務と依存関係
+
+main.jsは起動時にworkspace・sessions・controls・worksets・commandを一つずつ作り、OS暗号化の初期化後に既存のAPI・CLI等を接続する。起動順によって後から作成するサービスや再作成されるウィンドウは、明示的なgetterで参照する。各機能からmain.jsをrequireし直す循環importは作らない。
+
+workspaceは選択中ID・分割・オーバーレイ・ドラッグ状態・ポップアップを所有する。API/CLIの既存モジュールへ渡すtabsのMapは同じ実体を使い、ジョブの中止・PTYの停止は各モジュールが担当する。タブを閉じる場合はworkspaceからそれぞれへ終了処理を依頼する。ウィンドウ終了は従来どおり全WebContentsを閉じ、destroyedイベントの既存処理でもAPI中止・CLI停止を行う。アプリ終了時の履歴flushとMacのactivateによる再表示も維持する。
+
+sessionsはpartitionの設定済み集合と一時セッションの世代を所有する。保存セッションを使えるかは既存protectionの判定を参照する。暗号化初期化や保存先の識別子は変更しない。
+
+worksetsは保存定義の生成と確認後の操作順を担当する。Web/API/CLIの既存のserialize結果と保存順序を維持し、復元したCLIは自動実行しない。上書き・復元・削除の確認がキャンセルされた場合は構成と開いているタブを変更しない。
+
+browser-ipcは管理ウィンドウの同一WebContents、メインフレーム、正確なローカルURLをすべて検証する。処理中でもstateの取得を許可し、それ以外の同時操作は従来どおり拒否する。ネイティブメニューからの内部呼び出しとの経路の違いも維持する。
+
+この整理ではrenderer、各機能専用IPC／preload、protection、auth-manager、保存形式を変更しない。平文の保持期間を短くする設計変更は別途検討する。

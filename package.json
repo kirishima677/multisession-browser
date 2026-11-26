@@ -1,6 +1,6 @@
 {
   "name": "multisession-browser",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "A macOS testing browser with isolated sessions per tab",
   "private": true,
   "main": "src/main.js",
@@ -10,7 +10,7 @@
     "start": "electron .",
     "test": "node --test test/unit.test.js",
     "test:e2e": "playwright test",
-    "check": "node --check src/main.js && node --check src/model.js && node --check src/tab-layout.js && node --check src/context-menu.js && node --check src/preload.js && node --check src/site-preload.js && node --check src/renderer.js && node --check src/page-actions.js && node --check src/find-preload.js && node --check src/find.js && node --check src/api-request.js && node --check src/api-http.js && node --check src/api-tabs.js && node --check src/api-preload.js && node --check src/api.js && node --check src/runtime-model.js && node --check src/process-tree.js && node --check src/memory-monitor.js && node --check src/updates.js && node --check src/terminal-tabs.js && node --check src/terminal-preload.js && node --check src/terminal.js && node --check src/protection.js && node --check src/jwt.js && node --check src/auth-manager.js && node --check src/response-store.js && node --check src/network-capture.js && node --check src/test-tools.js && node --check src/test-tools-preload.js && node --check src/test-tools-ui.js && node --check scripts/secure-build.js && node --check scripts/secure-dev.js && node --check src/browser-library.js && node --check src/browser-menu.js && node --check src/library-window.js && node --check src/library-preload.js && node --check src/library.js",
+    "check": "node --check src/main.js && node --check src/model.js && node --check src/tab-layout.js && node --check src/context-menu.js && node --check src/preload.js && node --check src/site-preload.js && node --check src/renderer.js && node --check src/page-actions.js && node --check src/find-preload.js && node --check src/find.js && node --check src/api-request.js && node --check src/api-http.js && node --check src/api-tabs.js && node --check src/api-preload.js && node --check src/api.js && node --check src/runtime-model.js && node --check src/process-tree.js && node --check src/memory-monitor.js && node --check src/updates.js && node --check src/terminal-tabs.js && node --check src/terminal-preload.js && node --check src/terminal.js && node --check src/protection.js && node --check src/jwt.js && node --check src/auth-manager.js && node --check src/response-store.js && node --check src/network-capture.js && node --check src/test-tools.js && node --check src/test-tools-preload.js && node --check src/test-tools-ui.js && node --check scripts/secure-build.js && node --check scripts/secure-dev.js && node --check src/browser-library.js && node --check src/browser-menu.js && node --check src/library-window.js && node --check src/library-preload.js && node --check src/library.js && node --check src/browser-workspace.js && node --check src/browser-sessions.js && node --check src/worksets.js && node --check src/browser-controls.js && node --check src/browser-commands.js && node --check src/browser-ipc.js",
     "pack:mac": "electron-builder --mac --dir",
     "dist:mac": "electron-builder --mac zip dmg",
     "icon:mac": "bash scripts/build-icon.sh",
