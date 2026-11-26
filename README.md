@@ -332,6 +332,7 @@ ElectronのmacOSネイティブパスキーにはコード署名・provisioning 
 
 - [初期仕様](docs/specification.md)
 - [構成と開発上の注意](docs/architecture.md)
+- [秘密情報の取り扱いとメモリ管理：実装時の検討メモ](docs/secret-data-handling.md)
 - [検証記録](docs/verification.md)
 - [ローカル署名とキーチェーン継続許可](docs/macos-local-signing.md)
 
