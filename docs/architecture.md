@@ -30,8 +30,9 @@ BrowserWindow（管理UI / ローカルHTML）
 - `src/ui/modal.mjs` / `dialogs.mjs`：共通ダイアログの開閉・送信、セッション・新規タブ・構成保存・設定・ブックマークの入力。
 - `src/ui/runtime-view.mjs`：メモリ・更新・暗号化・認証情報等の表示。
 - `src/ui/shell-view.mjs` / `dom.mjs`：セッション・作業セット一覧、URL欄と状態表示、共通DOM部品。
-- `test/unit.test.js`：URL・partition・設定ファイルの検証。
-- `test/browser.spec.js`：実Electronとローカルサーバーでの統合テスト。
+- `test/unit/*.test.js`：機能別の単体テスト。検証対象ごとに分け、専用fixtureは必要なファイル内に置く。
+- `test/e2e/*.spec.js`：実Electronでの機能別の操作テスト。
+- `test/helpers/*.js`：テストごとのHTTPサーバー、Electron起動、共通の画面操作。
 
 ## 画面レイアウト
 
@@ -196,3 +197,15 @@ createUIStateで受信した全体状態を一か所に保持し、前のrevisio
 modalは共通の開閉、overlay通知、送信ボタンの再有効化を担当する。dialogsは入力内容と送信する操作を定義し、現在の画面状態を参照する。設定等の入力要素は背景のページ更新やruntime通知で置き換えない。入力エラーではダイアログを残し、修正して再送信できる。
 
 既存の遅延通知テストは、グローバルrender関数を直接呼ぶ代わりに、実際のbrowser:state通知経路から古いスナップショットを送る。テスト専用の関数を管理画面や閲覧ページへ公開しない。renderer.jsは993行から116行へ整理し、新規8モジュールの構文チェックも既存コマンドに含める。
+
+## テストコードの構成整理（アプリ Ver 0.7.4のまま）
+
+単体36件を15ファイル、操作30件を13ファイルへ分け、旧unit.test.jsとbrowser.spec.jsを置き換える。機能ごとのシナリオと期待値は保ち、共通の起動・画面取得・ダイアログ操作・JWT生成等をhelpersへまとめる。
+
+PlaywrightのtestDirはtest/e2e、testMatchは**/*.spec.jsとし、helpersや単体テストを操作テストとして収集しない。npm testはtest/unit/*.test.jsをファイル間も直列で実行する。操作テストのworkers: 1、45秒の上限、失敗時traceの設定は維持する。
+
+HTTPサーバーはbeforeAllの共有インスタンスからテスト単位のfixtureへ変更する。応答の差し替え・各種カウンター・配列はサーバーの生成ごとに独立する。browserHarnessも同じtestServerを参照し、再起動する場合は同じシナリオ内で同じURLを維持する。アプリの終了と一時プロファイルの削除は、各シナリオの既存finallyで行う。
+
+起動ヘルパーのリポジトリルート解決を新しいディレクトリ階層に合わせ、MSB_EXECUTABLEによる指定を維持する。welcome.pngだけはPlaywrightのテストごとの出力先へ移し、上書きを防ぐ。機能固有の成果物の保存先は維持する。
+
+テスト名とテスト本体は、fixtureの接続と相対importパスを正規化して構文木で照合し、全66件で一致することを確認する。アプリ本体、版数、依存ライブラリ、保存形式、平文保持方針は変更しない。testディレクトリは既存のアプリ梱包対象に含まれないため、テスト整理のための再ビルドは行わない。
